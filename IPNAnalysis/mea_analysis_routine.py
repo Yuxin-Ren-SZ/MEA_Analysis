@@ -48,6 +48,7 @@ try:
     # Use simple imports if the files are in the same directory
     # OR keep your package structure if path is fixed above
     from MEA_Analysis.IPNAnalysis.parameter_free_burst_detector import compute_network_bursts
+    from MEA_Analysis.IPNAnalysis.neuron_spatial_maps import plot_neuron_spatial_maps
     import helper_functions as helper
     from scalebury import add_scalebar
 except ImportError as e:
@@ -434,12 +435,13 @@ class MEAPipeline:
                 folder=analyzer_folder, sparsity=sparsity, return_in_uV=True
             )
 
-            ext_list = ["random_spikes","spike_amplitudes", "waveforms", "templates", "noise_levels", 
-                        "quality_metrics", "template_metrics", "unit_locations"]
-            
+            ext_list = ["random_spikes","spike_amplitudes", "waveforms", "templates", "noise_levels",
+                        "quality_metrics", "template_metrics", "unit_locations", "spike_locations"]
+
             ext_params = {
                 "waveforms": {"ms_before": 1.0, "ms_after": 2.0},
-                "unit_locations": {"method": "monopolar_triangulation"}
+                "unit_locations": {"method": "monopolar_triangulation"},
+                "spike_locations": {"method": "monopolar_triangulation"}
             }
             
             self.analyzer.compute(ext_list, extension_params=ext_params, verbose=self.verbose)
@@ -491,6 +493,25 @@ class MEAPipeline:
 
             mask = np.isin(self.analyzer.unit_ids, clean_units)
             self._plot_probe_locations(clean_units, locations[mask], f"locations_{len(clean_units)}_units.pdf")
+
+            # Spatial visualization (following parameter_free_burst_detector pattern)
+            spike_locs_ext = self.analyzer.get_extension("spike_locations")
+            if spike_locs_ext is not None:
+                spike_locs = spike_locs_ext.get_data()
+                amplitudes = q_metrics.loc[clean_units, 'amplitude_median'].values
+                spatial_results = plot_neuron_spatial_maps(
+                    recording=self.recording,
+                    spike_locs=spike_locs,
+                    unit_locations=locations[mask],
+                    amplitudes=amplitudes,
+                    output_dir=self.output_dir,
+                    plot=True,
+                    verbose=self.verbose
+                )
+                self.logger.info(f"Spatial maps generated: {spatial_results.get('total_spikes', 0)} spikes")
+            else:
+                self.logger.warning("spike_locations extension not available. Skipping spatial maps.")
+
             self._plot_waveforms_grid(clean_units)
             self._run_burst_analysis(clean_units)
 
@@ -538,7 +559,6 @@ class MEAPipeline:
         ax.invert_yaxis()
         fig.savefig(self.output_dir / filename)
         plt.close(fig)
-
 
     def _plot_waveforms_grid(self, unit_ids):
         pdf_path = self.output_dir / "waveforms_grid.pdf"
