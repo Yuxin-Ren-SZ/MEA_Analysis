@@ -1,5 +1,6 @@
 **.asv
 **.txt
+!IPNAnalysis/requirements.txt
 **__pycache__**
 IPNAnalysis/AnalyzedData/*
 IPNAnalysis/sorting_intermediate/*

@@ -1,0 +1,25 @@
+# Core Data Science
+numpy>=1.26.0
+scipy>=1.15.0
+pandas>=2.2.0
+matplotlib>=3.10.0
+
+# Spike Sorting (spikeinterface[full] includes neo, probeinterface, etc.)
+spikeinterface[full]>=0.103.0
+kilosort>=4.0.0
+
+# File I/O
+h5py>=3.10.0
+openpyxl  # Required for pandas .to_excel() / .read_excel()
+
+# Deep Learning (for GPU spike sorting)
+torch>=2.0.0
+
+# Time Series Smoothing
+tsmoothie>=1.0.0
+
+# System Utilities
+psutil
+
+# Dashboard
+streamlit>=1.50.0
