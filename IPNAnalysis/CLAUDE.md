@@ -95,6 +95,28 @@ bursts_gaussian = plot_network_activity(ax, spike_times_dict, gaussianSigma=0.1)
 burst_results = compute_network_bursts(ax_raster, ax_macro, spike_times_dict)
 ```
 
+<<<<<<< HEAD
+=======
+## Key Jupyter Notebooks
+
+### Primary Analysis (`workbooks/`)
+
+| Notebook | Purpose |
+|----------|---------|
+| `spikeTImesProcessing.ipynb` | Spike time post-processing, custom burst detection |
+| `CIRM_figures.ipynb` | Publication figures (CDKL5, organoids) |
+| `SpikeSortingAlgorithmFigures.ipynb` | Algorithm validation, quality metrics |
+| `analysis_general.ipynb` | General workflows, templates |
+| `compare_two_sorters.ipynb` | Kilosort version comparison |
+
+### Visualization (`Plotting/`)
+
+| Notebook | Purpose |
+|----------|---------|
+| `plotNetworkActivtitySpikeSortedMetrics.ipynb` | Firing rate plots, burst statistics |
+| `amplitude_graphs.ipynb` | Amplitude analysis visualizations |
+
+>>>>>>> 2d7e497 (Replace plot selection flags with unified --analysis flag)
 ## Architecture
 
 ### Core Modules
@@ -111,14 +133,14 @@ burst_results = compute_network_bursts(ax_raster, ax_macro, spike_times_dict)
 AnalyzedData/{project}/{date}/{chip_id}/{run_id}/{well_id}/
 ├── quality_metrics.xlsx              # Unit quality (SNR, firing rate, etc.)
 ├── template_metrics.xlsx             # Waveform shape features
-├── network_data.json                 # Network burst statistics (skip with --no-burst-analysis)
+├── network_data.json                 # Network burst statistics (requires 'burst' in --analysis)
 ├── spikesorted_spike_times_dict.npy  # Spike times per unit
-├── waveforms/                        # PDF waveform plots (skip with --no-waveforms)
-├── spike_sorted_raster_plot.svg      # Network raster (skip with --no-raster-plots)
-├── locations_*.pdf                   # Probe location plots (skip with --no-probe-maps)
-├── neuron_spatial_density.pdf        # Per-spike scatter (opt-in: --with-spatial-maps)
-├── neuron_spatial_amplitude.pdf      # Unit amplitude heatmap (opt-in: --with-spatial-maps)
-└── neuron_spatial_combined.pdf       # Side-by-side panel view (opt-in: --with-spatial-maps)
+├── waveforms/                        # PDF waveform plots (requires 'waveforms' in --analysis)
+├── spike_sorted_raster_plot.svg      # Network raster (requires 'raster' in --analysis)
+├── locations_*.pdf                   # Probe location plots (requires 'probe' in --analysis)
+├── neuron_spatial_density.pdf        # Per-spike scatter (requires 'spatial' in --analysis)
+├── neuron_spatial_amplitude.pdf      # Unit amplitude heatmap (requires 'spatial' in --analysis)
+└── neuron_spatial_combined.pdf       # Side-by-side panel view (requires 'spatial' in --analysis)
 ```
 
 ### Data Flow
@@ -198,6 +220,7 @@ The `MEAPipeline` class in `mea_analysis_routine.py` processes each well through
 
 ## Quality Thresholds
 
+<<<<<<< HEAD
 Defined in `sorting_quality_threshold_params.json`:
 
 | Metric | Threshold | Meaning |
@@ -206,6 +229,42 @@ Defined in `sorting_quality_threshold_params.json`:
 | `rp_contamination` | < 1.0 | Refractory period violations acceptable |
 | `firing_rate` | > 0.05 Hz | Minimum activity |
 | `amplitude_median` | ≤ -20 µV | Minimum signal amplitude |
+=======
+**Analysis Selection Flag** (available in both scripts):
+- `--analysis <list>`: Comma-separated list of analyses to run
+  - **Valid analyses**: `probe`, `waveforms`, `raster`, `burst`, `spatial`
+  - **Presets**: `default` (probe,waveforms,raster,burst), `all`, `minimal` (burst only), `none`
+  - **Examples**:
+    - `--analysis default,spatial` - Run all default analyses plus spatial maps
+    - `--analysis burst` - Only burst metrics (no plots)
+    - `--analysis raster` - Raster plots (auto-enables burst)
+    - `--analysis all` - All analyses including spatial
+  - **Note**: If `raster` is specified, `burst` is auto-enabled (required for plot data)
+
+**run_pipeline_driver.py** (additional):
+- `--reference`: Excel file for filtering runs
+- `--type`: Assay types to include (default: "network today", "network today/best")
+- `--dry`: Dry run (no processing)
+
+### Pipeline Stages (Checkpointed)
+
+1. **PREPROCESSING**: Load Maxwell .h5 → Bandpass 300-3000Hz → Local CMR → Zarr/binary
+2. **SORTING**: Kilosort → Remove empty/duplicate units → Checkpoint
+3. **ANALYZER**: SortingAnalyzer → Sparse waveforms (50µm) → Extensions → Checkpoint
+4. **REPORTS**: Quality metrics → Curation → Burst detection → Visualizations → JSON export
+
+### Quality Thresholds (sorting_quality_threshold_params.json)
+- `num_spikes > 300`: Minimum spike count
+- `presence_ratio > 0.9`: Unit active throughout recording
+- `rp_contamination < 1.0`: Refractory period violations
+- `firing_rate > 0.05 Hz`: Minimum activity
+- `amplitude_median <= -20 µV`: Minimum signal amplitude
+
+### Monitoring Dashboard
+```bash
+streamlit run streamlit_checkpoint_analyzer/checkpoint_dashboard.py
+```
+>>>>>>> 2d7e497 (Replace plot selection flags with unified --analysis flag)
 
 ## Output Metrics Reference
 
