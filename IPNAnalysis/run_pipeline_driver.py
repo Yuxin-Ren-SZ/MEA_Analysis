@@ -91,19 +91,12 @@ def main():
     parser.add_argument("--output-dir", type=str, help="Output directory for results")
     parser.add_argument("--reanalyze-bursts", action="store_true", help="Re-analyze bursts even if present")
 
-    # Plot selection flags (legacy - opt-out, enabled by default)
-    parser.add_argument('--no-probe-maps', action='store_true',
-                        help='Skip probe location plots (locations_*.pdf)')
-    parser.add_argument('--no-waveforms', action='store_true',
-                        help='Skip waveforms grid PDF')
-    parser.add_argument('--no-raster-plots', action='store_true',
-                        help='Skip raster burst plots (SVG/PNG)')
-    parser.add_argument('--no-burst-analysis', action='store_true',
-                        help='Skip burst detection and network analysis (no network_results.json)')
-
-    # New features (opt-in, disabled by default to match legacy behavior)
-    parser.add_argument('--with-spatial-maps', action='store_true',
-                        help='Enable neuron spatial map visualizations (density, amplitude, combined PDFs)')
+    # Unified analysis selection flag
+    parser.add_argument('--analysis', type=str, default=None,
+                        help='Comma-separated list of analyses to run. '
+                             'Valid: probe, waveforms, raster, burst, spatial. '
+                             'Presets: default (probe,waveforms,raster,burst), all, minimal (burst only), none. '
+                             'Example: --analysis default,spatial')
 
     args = parser.parse_args()
 
@@ -168,12 +161,8 @@ def main():
     if args.skip_spikesorting: extra_args.append("--skip-spikesorting")
     if args.output_dir: extra_args.append(f"--output-dir '{args.output_dir}'")
     if args.reanalyze_bursts: extra_args.append("--reanalyze-bursts")
-    # Plot selection flags
-    if args.no_probe_maps: extra_args.append("--no-probe-maps")
-    if args.no_waveforms: extra_args.append("--no-waveforms")
-    if args.no_raster_plots: extra_args.append("--no-raster-plots")
-    if args.no_burst_analysis: extra_args.append("--no-burst-analysis")
-    if args.with_spatial_maps: extra_args.append("--with-spatial-maps")
+    # Analysis selection flag (pass through as-is)
+    if args.analysis: extra_args.append(f"--analysis '{args.analysis}'")
     extra_arg_string = " ".join(extra_args)
     logger.info(f"start time : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
     #ticker

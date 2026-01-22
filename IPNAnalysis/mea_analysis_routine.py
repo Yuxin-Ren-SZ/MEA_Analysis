@@ -59,6 +59,47 @@ except ImportError as e:
     sys.exit(1)
 
 
+def parse_analysis_flags(analysis_arg: str | None) -> set[str]:
+    """
+    Parse --analysis argument into set of enabled analyses.
+
+    Args:
+        analysis_arg: Comma-separated string like "default,spatial" or None
+
+    Returns:
+        Set of enabled analysis names: {'probe', 'waveforms', 'raster', 'burst', 'spatial'}
+    """
+    PRESETS = {
+        'default': {'probe', 'waveforms', 'raster', 'burst'},
+        'all': {'probe', 'waveforms', 'raster', 'burst', 'spatial'},
+        'minimal': {'burst'},
+        'none': set(),
+    }
+    VALID_ANALYSES = {'probe', 'waveforms', 'raster', 'burst', 'spatial'}
+
+    if analysis_arg is None:
+        return PRESETS['default'].copy()
+
+    enabled = set()
+    for item in analysis_arg.lower().split(','):
+        item = item.strip()
+        if not item:
+            continue
+        if item in PRESETS:
+            enabled.update(PRESETS[item])
+        elif item in VALID_ANALYSES:
+            enabled.add(item)
+        else:
+            valid_options = sorted(VALID_ANALYSES | set(PRESETS.keys()))
+            raise ValueError(f"Unknown analysis: '{item}'. Valid options: {valid_options}")
+
+    # Dependency: raster requires burst
+    if 'raster' in enabled and 'burst' not in enabled:
+        enabled.add('burst')
+        print("Note: 'raster' requires burst analysis; 'burst' auto-enabled")
+
+    return enabled
+
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -460,12 +501,25 @@ class MEAPipeline:
 
     # --- Phase 4: Reports & Curation ---
     def generate_reports(self, thresholds=None, no_curation=False, export_phy=False,
-                         no_probe_maps=False, no_waveforms=False,
-                         no_raster_plots=False, no_burst_analysis=False,
-                         with_spatial_maps=False):
+                         enabled_analyses: set[str] = None):
+        """
+        Generate reports and visualizations based on enabled analyses.
+
+        Args:
+            thresholds: Quality thresholds for curation
+            no_curation: Skip automatic curation if True
+            export_phy: Export to Phy format if True
+            enabled_analyses: Set of enabled analysis names. Valid values:
+                'probe', 'waveforms', 'raster', 'burst', 'spatial'
+        """
         if self.state['stage'] == ProcessingStage.REPORTS_COMPLETE.value: return
 
+        # Default to all standard analyses if not specified
+        if enabled_analyses is None:
+            enabled_analyses = {'probe', 'waveforms', 'raster', 'burst'}
+
         self.logger.info("--- [Phase 4] Reports & Curation ---")
+        self.logger.info(f"Enabled analyses: {sorted(enabled_analyses)}")
         try:
             q_metrics = self.analyzer.get_extension("quality_metrics").get_data()
             t_metrics = self.analyzer.get_extension("template_metrics").get_data()
@@ -476,10 +530,10 @@ class MEAPipeline:
 
             q_metrics.to_excel(self.output_dir / "qm_unfiltered.xlsx")
             t_metrics.to_excel(self.output_dir / "tm_unfiltered.xlsx")
-            if not no_probe_maps:
+            if 'probe' in enabled_analyses:
                 self._plot_probe_locations(q_metrics.index.values, locations, "locations_unfiltered.pdf")
             else:
-                self.logger.info("Skipping unfiltered probe location plot (--no-probe-maps)")
+                self.logger.info("Skipping unfiltered probe location plot (probe not in --analysis)")
 
             if no_curation:
                 self.logger.info("Skipping curation.")
@@ -498,13 +552,13 @@ class MEAPipeline:
                 return
 
             mask = np.isin(self.analyzer.unit_ids, clean_units)
-            if not no_probe_maps:
+            if 'probe' in enabled_analyses:
                 self._plot_probe_locations(clean_units, locations[mask], f"locations_{len(clean_units)}_units.pdf")
             else:
-                self.logger.info("Skipping curated probe location plot (--no-probe-maps)")
+                self.logger.info("Skipping curated probe location plot (probe not in --analysis)")
 
-            # Spatial visualization (opt-in with --with-spatial-maps)
-            if with_spatial_maps:
+            # Spatial visualization (opt-in with 'spatial' in --analysis)
+            if 'spatial' in enabled_analyses:
                 spike_locs_ext = self.analyzer.get_extension("spike_locations")
                 if spike_locs_ext is not None:
                     spike_locs = spike_locs_ext.get_data()
@@ -520,20 +574,21 @@ class MEAPipeline:
                     )
                     self.logger.info(f"Spatial maps generated: {spatial_results.get('total_spikes', 0)} spikes")
                 else:
-                    self.logger.warning("--with-spatial-maps specified but spike_locations extension not available.")
+                    self.logger.warning("'spatial' in --analysis but spike_locations extension not available.")
             else:
-                self.logger.info("Skipping spatial maps (use --with-spatial-maps to enable)")
+                self.logger.info("Skipping spatial maps (add 'spatial' to --analysis to enable)")
 
-            if not no_waveforms:
+            if 'waveforms' in enabled_analyses:
                 self._plot_waveforms_grid(clean_units)
             else:
-                self.logger.info("Skipping waveforms grid (--no-waveforms)")
+                self.logger.info("Skipping waveforms grid (waveforms not in --analysis)")
 
-            if not no_burst_analysis:
-                self._run_burst_analysis(clean_units, no_raster_plots=no_raster_plots)
+            if 'burst' in enabled_analyses:
+                save_raster = 'raster' in enabled_analyses
+                self._run_burst_analysis(clean_units, save_raster=save_raster)
             else:
                 # Still save spike times even when skipping burst analysis
-                self.logger.info("Skipping burst analysis (--no-burst-analysis)")
+                self.logger.info("Skipping burst analysis (burst not in --analysis)")
                 if self.sorting:
                     fs = self.recording.get_sampling_frequency()
                     spike_times = {}
@@ -646,7 +701,15 @@ class MEAPipeline:
                 pdf_doc.savefig(fig)
                 plt.close(fig)
 
-    def _run_burst_analysis(self, ids_list=None, no_raster_plots=False):
+    def _run_burst_analysis(self, ids_list=None, save_raster=True):
+            """
+            Run network burst analysis on spike times.
+
+            Args:
+                ids_list: List of unit IDs to analyze. If None, uses all analyzer unit IDs.
+                save_raster: If True, generate and save raster plots (SVG/PNG).
+                            If False, only compute burst statistics and save JSON.
+            """
             self.logger.info("Running Network Burst Analysis...")
 
             spike_times = {}
@@ -674,7 +737,7 @@ class MEAPipeline:
                 burst_stats = helper.detect_bursts_statistics(spike_times, isi_threshold=0.1)
                 bursts = [x['bursts'] for x in burst_stats.values()]
 
-                if not no_raster_plots:
+                if save_raster:
                     fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
                     title_suffix = f" "
                     helper.plot_raster_with_bursts(axs[0], spike_times, bursts, title_suffix=title_suffix)
@@ -699,7 +762,7 @@ class MEAPipeline:
                     plt.close(fig)
                 else:
                     # B. Network Burst Calculation (without plotting)
-                    self.logger.info("Skipping raster plots (--no-raster-plots)")
+                    self.logger.info("Skipping raster plots (raster not in --analysis)")
                     network_data = compute_network_bursts(ax_raster=None, ax_macro=None, SpikeTimes=spike_times, plot=False)
                     network_data['file'] = str(self.relative_pattern)
                     network_data['well'] = self.stream_id
@@ -775,27 +838,27 @@ def main():
     parser.add_argument('--skip-spikesorting', action='store_true')
     parser.add_argument("--reanalyze-bursts", action="store_true", help="Only re-run burst analysis on existing spike times.")
 
-    # Plot selection flags (legacy - opt-out, enabled by default)
-    parser.add_argument('--no-probe-maps', action='store_true',
-                        help='Skip probe location plots (locations_*.pdf)')
-    parser.add_argument('--no-waveforms', action='store_true',
-                        help='Skip waveforms grid PDF')
-    parser.add_argument('--no-raster-plots', action='store_true',
-                        help='Skip raster burst plots (SVG/PNG)')
-    parser.add_argument('--no-burst-analysis', action='store_true',
-                        help='Skip burst detection and network analysis (no network_results.json)')
-
-    # New features (opt-in, disabled by default to match legacy behavior)
-    parser.add_argument('--with-spatial-maps', action='store_true',
-                        help='Enable neuron spatial map visualizations (density, amplitude, combined PDFs)')
+    # Unified analysis selection flag
+    parser.add_argument('--analysis', type=str, default=None,
+                        help='Comma-separated list of analyses to run. '
+                             'Valid: probe, waveforms, raster, burst, spatial. '
+                             'Presets: default (probe,waveforms,raster,burst), all, minimal (burst only), none. '
+                             'Example: --analysis default,spatial')
 
     args = parser.parse_args()
 
+    # Parse analysis flags into a set
+    try:
+        enabled_analyses = parse_analysis_flags(args.analysis)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
     # Edge case: Handle conflicting flags
-    if args.no_burst_analysis and args.reanalyze_bursts:
-        print("Warning: Both --no-burst-analysis and --reanalyze-bursts specified. "
-              "Prioritizing --reanalyze-bursts.")
-        args.no_burst_analysis = False
+    if 'burst' not in enabled_analyses and args.reanalyze_bursts:
+        print("Warning: --analysis excludes 'burst' but --reanalyze-bursts specified. "
+              "Adding 'burst' to enabled analyses.")
+        enabled_analyses.add('burst')
 
     thresholds = None
     if args.params:
@@ -813,7 +876,8 @@ def main():
 
         if args.reanalyze_bursts:
             print("Re-analyzing bursts only on existing spike times...")
-            pipeline._run_burst_analysis(no_raster_plots=args.no_raster_plots)
+            save_raster = 'raster' in enabled_analyses
+            pipeline._run_burst_analysis(save_raster=save_raster)
             current_stage = ProcessingStage(pipeline.state['stage'])
             pipeline._save_checkpoint(current_stage, note="Burst Re-analysis Performed",last_updated=str(datetime.now()))
             print("Burst Re-analysis Complete.")
@@ -831,15 +895,12 @@ def main():
                 thresholds=thresholds,
                 no_curation=args.no_curation,
                 export_phy=args.export_to_phy,
-                no_probe_maps=args.no_probe_maps,
-                no_waveforms=args.no_waveforms,
-                no_raster_plots=args.no_raster_plots,
-                no_burst_analysis=args.no_burst_analysis,
-                with_spatial_maps=args.with_spatial_maps
+                enabled_analyses=enabled_analyses
             )
         else:
             ids = pipeline._spike_detection_only()
-            pipeline._run_burst_analysis(ids, no_raster_plots=args.no_raster_plots)
+            save_raster = 'raster' in enabled_analyses
+            pipeline._run_burst_analysis(ids, save_raster=save_raster)
 
         pipeline.cleanup()
         print(f"Processing Complete for {args.well}")
