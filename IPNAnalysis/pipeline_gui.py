@@ -161,39 +161,54 @@ class PipelineGUI:
         self.reanalyze_bursts_var.trace_add("write", lambda *args: self.update_preview())
         ttk.Checkbutton(proc_frame, text="Reanalyze Bursts", variable=self.reanalyze_bursts_var).pack(anchor=tk.W)
 
-        # Plot Selection (opt-out)
-        plot_frame = ttk.LabelFrame(outer_frame, text="Plot Selection (check to skip)", padding="5")
-        plot_frame.grid(row=0, column=2, sticky=tk.NSEW, padx=5)
+        # Analysis Selection frame
+        analysis_frame = ttk.LabelFrame(outer_frame, text="Analysis Selection", padding="5")
+        analysis_frame.grid(row=0, column=2, columnspan=2, sticky=tk.NSEW, padx=5)
 
-        self.no_probe_maps_var = tk.BooleanVar()
-        self.no_probe_maps_var.trace_add("write", lambda *args: self.update_preview())
-        ttk.Checkbutton(plot_frame, text="No Probe Maps", variable=self.no_probe_maps_var).pack(anchor=tk.W)
+        # Flag to prevent recursive updates
+        self._updating_analysis = False
 
-        self.no_waveforms_var = tk.BooleanVar()
-        self.no_waveforms_var.trace_add("write", lambda *args: self.update_preview())
-        ttk.Checkbutton(plot_frame, text="No Waveforms", variable=self.no_waveforms_var).pack(anchor=tk.W)
+        # Preset dropdown
+        preset_row = ttk.Frame(analysis_frame)
+        preset_row.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(preset_row, text="Preset:").pack(side=tk.LEFT, padx=(0, 5))
+        self.analysis_preset_var = tk.StringVar(value="default")
+        self.analysis_preset_var.trace_add("write", self._on_preset_change)
+        preset_combo = ttk.Combobox(preset_row, textvariable=self.analysis_preset_var, width=12, state="readonly")
+        preset_combo['values'] = ("default", "all", "minimal", "none", "custom")
+        preset_combo.pack(side=tk.LEFT)
 
-        self.no_raster_plots_var = tk.BooleanVar()
-        self.no_raster_plots_var.trace_add("write", lambda *args: self.update_preview())
-        ttk.Checkbutton(plot_frame, text="No Raster Plots", variable=self.no_raster_plots_var).pack(anchor=tk.W)
+        # Individual analysis checkboxes (opt-in style)
+        self.probe_var = tk.BooleanVar(value=True)
+        self.probe_var.trace_add("write", self._on_analysis_checkbox_change)
+        ttk.Checkbutton(analysis_frame, text="Probe Maps", variable=self.probe_var).pack(anchor=tk.W)
 
-        self.no_burst_analysis_var = tk.BooleanVar()
-        self.no_burst_analysis_var.trace_add("write", lambda *args: self.update_preview())
-        ttk.Checkbutton(plot_frame, text="No Burst Analysis", variable=self.no_burst_analysis_var).pack(anchor=tk.W)
+        self.waveforms_var = tk.BooleanVar(value=True)
+        self.waveforms_var.trace_add("write", self._on_analysis_checkbox_change)
+        ttk.Checkbutton(analysis_frame, text="Waveforms", variable=self.waveforms_var).pack(anchor=tk.W)
 
-        # New Features (opt-in)
-        new_frame = ttk.LabelFrame(outer_frame, text="New Features", padding="5")
-        new_frame.grid(row=0, column=3, sticky=tk.NSEW, padx=(5, 0))
+        self.raster_var = tk.BooleanVar(value=True)
+        self.raster_var.trace_add("write", self._on_analysis_checkbox_change)
+        ttk.Checkbutton(analysis_frame, text="Raster Plots", variable=self.raster_var).pack(anchor=tk.W)
 
-        self.with_spatial_maps_var = tk.BooleanVar()
-        self.with_spatial_maps_var.trace_add("write", lambda *args: self.update_preview())
-        ttk.Checkbutton(new_frame, text="With Spatial Maps", variable=self.with_spatial_maps_var).pack(anchor=tk.W)
+        self.burst_var = tk.BooleanVar(value=True)
+        self.burst_var.trace_add("write", self._on_analysis_checkbox_change)
+        ttk.Checkbutton(analysis_frame, text="Burst Analysis", variable=self.burst_var).pack(anchor=tk.W)
+
+        self.spatial_var = tk.BooleanVar(value=False)
+        self.spatial_var.trace_add("write", self._on_analysis_checkbox_change)
+        ttk.Checkbutton(analysis_frame, text="Spatial Maps", variable=self.spatial_var).pack(anchor=tk.W)
+
+        # Preview label showing resolved analysis string
+        self.analysis_preview_var = tk.StringVar(value="probe,waveforms,raster,burst")
+        preview_label = ttk.Label(analysis_frame, textvariable=self.analysis_preview_var,
+                                  foreground="gray", font=("TkDefaultFont", 9))
+        preview_label.pack(anchor=tk.W, pady=(5, 0))
 
         # Configure column weights for even distribution
         outer_frame.columnconfigure(0, weight=1)
         outer_frame.columnconfigure(1, weight=1)
-        outer_frame.columnconfigure(2, weight=1)
-        outer_frame.columnconfigure(3, weight=1)
+        outer_frame.columnconfigure(2, weight=2)
 
     def _build_preview_section(self):
         """Build command preview section."""
@@ -239,6 +254,104 @@ class PipelineGUI:
         dirpath = filedialog.askdirectory()
         if dirpath:
             var.set(dirpath)
+
+    def _on_preset_change(self, *args):
+        """Update checkboxes when preset changes."""
+        if self._updating_analysis:
+            return
+
+        self._updating_analysis = True
+        preset = self.analysis_preset_var.get()
+
+        preset_mappings = {
+            "default": {"probe": True, "waveforms": True, "raster": True, "burst": True, "spatial": False},
+            "all": {"probe": True, "waveforms": True, "raster": True, "burst": True, "spatial": True},
+            "minimal": {"probe": False, "waveforms": False, "raster": False, "burst": True, "spatial": False},
+            "none": {"probe": False, "waveforms": False, "raster": False, "burst": False, "spatial": False},
+        }
+
+        if preset in preset_mappings:
+            mapping = preset_mappings[preset]
+            self.probe_var.set(mapping["probe"])
+            self.waveforms_var.set(mapping["waveforms"])
+            self.raster_var.set(mapping["raster"])
+            self.burst_var.set(mapping["burst"])
+            self.spatial_var.set(mapping["spatial"])
+
+        self._update_analysis_preview()
+        self._updating_analysis = False
+        self.update_preview()
+
+    def _on_analysis_checkbox_change(self, *args):
+        """Switch to custom preset when checkbox manually changed."""
+        if self._updating_analysis:
+            return
+
+        self._updating_analysis = True
+
+        # If raster is checked, auto-enable burst (dependency)
+        if self.raster_var.get() and not self.burst_var.get():
+            self.burst_var.set(True)
+
+        # Switch to custom preset if current state doesn't match any preset
+        current_state = {
+            "probe": self.probe_var.get(),
+            "waveforms": self.waveforms_var.get(),
+            "raster": self.raster_var.get(),
+            "burst": self.burst_var.get(),
+            "spatial": self.spatial_var.get(),
+        }
+
+        preset_mappings = {
+            "default": {"probe": True, "waveforms": True, "raster": True, "burst": True, "spatial": False},
+            "all": {"probe": True, "waveforms": True, "raster": True, "burst": True, "spatial": True},
+            "minimal": {"probe": False, "waveforms": False, "raster": False, "burst": True, "spatial": False},
+            "none": {"probe": False, "waveforms": False, "raster": False, "burst": False, "spatial": False},
+        }
+
+        matched_preset = "custom"
+        for preset_name, mapping in preset_mappings.items():
+            if current_state == mapping:
+                matched_preset = preset_name
+                break
+
+        if self.analysis_preset_var.get() != matched_preset:
+            self.analysis_preset_var.set(matched_preset)
+
+        self._update_analysis_preview()
+        self._updating_analysis = False
+        self.update_preview()
+
+    def _update_analysis_preview(self):
+        """Update the analysis preview label."""
+        analysis_str = self._get_analysis_string()
+        if analysis_str:
+            self.analysis_preview_var.set(f"--analysis {analysis_str}")
+        else:
+            self.analysis_preview_var.set("(no analyses)")
+
+    def _get_analysis_string(self):
+        """Build analysis string from current checkbox state."""
+        preset = self.analysis_preset_var.get()
+
+        # For known presets, just return the preset name
+        if preset in ("default", "all", "minimal", "none"):
+            return preset
+
+        # For custom, build from checkboxes
+        analyses = []
+        if self.probe_var.get():
+            analyses.append("probe")
+        if self.waveforms_var.get():
+            analyses.append("waveforms")
+        if self.raster_var.get():
+            analyses.append("raster")
+        if self.burst_var.get():
+            analyses.append("burst")
+        if self.spatial_var.get():
+            analyses.append("spatial")
+
+        return ",".join(analyses) if analyses else "none"
 
     def build_command(self):
         """Build the CLI command from current GUI state."""
@@ -304,19 +417,10 @@ class PipelineGUI:
         if self.reanalyze_bursts_var.get():
             cmd_parts.append("--reanalyze-bursts")
 
-        # Plot selection flags
-        if self.no_probe_maps_var.get():
-            cmd_parts.append("--no-probe-maps")
-        if self.no_waveforms_var.get():
-            cmd_parts.append("--no-waveforms")
-        if self.no_raster_plots_var.get():
-            cmd_parts.append("--no-raster-plots")
-        if self.no_burst_analysis_var.get():
-            cmd_parts.append("--no-burst-analysis")
-
-        # New features
-        if self.with_spatial_maps_var.get():
-            cmd_parts.append("--with-spatial-maps")
+        # Analysis selection
+        analysis = self._get_analysis_string()
+        if analysis and analysis != "default":
+            cmd_parts.append(f"--analysis {analysis}")
 
         return " ".join(cmd_parts)
 
@@ -408,17 +512,10 @@ class PipelineGUI:
         if self.reanalyze_bursts_var.get():
             cmd_list.append("--reanalyze-bursts")
 
-        if self.no_probe_maps_var.get():
-            cmd_list.append("--no-probe-maps")
-        if self.no_waveforms_var.get():
-            cmd_list.append("--no-waveforms")
-        if self.no_raster_plots_var.get():
-            cmd_list.append("--no-raster-plots")
-        if self.no_burst_analysis_var.get():
-            cmd_list.append("--no-burst-analysis")
-
-        if self.with_spatial_maps_var.get():
-            cmd_list.append("--with-spatial-maps")
+        # Analysis selection
+        analysis = self._get_analysis_string()
+        if analysis:
+            cmd_list.extend(["--analysis", analysis])
 
         # Update UI state
         self.is_running = True

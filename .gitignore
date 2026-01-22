@@ -10,6 +10,7 @@ AnalyzedData/*
 AxonReconPipeline/data/*
 **.mat
 .vscode
+.idea/
 **.pkl
 slurm*.out
 **.png
