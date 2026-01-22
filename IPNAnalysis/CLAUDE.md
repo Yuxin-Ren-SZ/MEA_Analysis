@@ -71,8 +71,8 @@ burst_results = compute_network_bursts(ax_raster, ax_macro, spike_times_dict)
 
 | Notebook | Purpose |
 |----------|---------|
-| `realNetworkRasters.ipynb` | Network-wide raster plots |
 | `plotNetworkActivtitySpikeSortedMetrics.ipynb` | Firing rate plots, burst statistics |
+| `amplitude_graphs.ipynb` | Amplitude analysis visualizations |
 
 ## Architecture
 
@@ -90,14 +90,14 @@ burst_results = compute_network_bursts(ax_raster, ax_macro, spike_times_dict)
 AnalyzedData/{project}/{date}/{chip_id}/{run_id}/{well_id}/
 ├── quality_metrics.xlsx              # Unit quality (SNR, firing rate, etc.)
 ├── template_metrics.xlsx             # Waveform shape features
-├── network_data.json                 # Network burst statistics (skip with --no-burst-analysis)
+├── network_data.json                 # Network burst statistics (requires 'burst' in --analysis)
 ├── spikesorted_spike_times_dict.npy  # Spike times per unit
-├── waveforms/                        # PDF waveform plots (skip with --no-waveforms)
-├── spike_sorted_raster_plot.svg      # Network raster (skip with --no-raster-plots)
-├── locations_*.pdf                   # Probe location plots (skip with --no-probe-maps)
-├── neuron_spatial_density.pdf        # Per-spike scatter (opt-in: --with-spatial-maps)
-├── neuron_spatial_amplitude.pdf      # Unit amplitude heatmap (opt-in: --with-spatial-maps)
-└── neuron_spatial_combined.pdf       # Side-by-side panel view (opt-in: --with-spatial-maps)
+├── waveforms/                        # PDF waveform plots (requires 'waveforms' in --analysis)
+├── spike_sorted_raster_plot.svg      # Network raster (requires 'raster' in --analysis)
+├── locations_*.pdf                   # Probe location plots (requires 'probe' in --analysis)
+├── neuron_spatial_density.pdf        # Per-spike scatter (requires 'spatial' in --analysis)
+├── neuron_spatial_amplitude.pdf      # Unit amplitude heatmap (requires 'spatial' in --analysis)
+└── neuron_spatial_combined.pdf       # Side-by-side panel view (requires 'spatial' in --analysis)
 ```
 
 ### Data Flow
@@ -266,12 +266,16 @@ python run_pipeline_driver.py /path/to/data/directory \
 - `--skip-spikesorting`: Skip sorting stage (use existing results)
 - `--reanalyze-bursts`: Re-run burst analysis only
 
-**Plot Selection Flags** (available in both scripts):
-- `--no-probe-maps`: Skip probe location plots (locations_*.pdf)
-- `--no-waveforms`: Skip waveforms grid PDF
-- `--no-raster-plots`: Skip raster burst plots (SVG/PNG), still saves network_results.json
-- `--no-burst-analysis`: Skip burst detection entirely (no network_results.json, still saves spike_times.npy)
-- `--with-spatial-maps`: Enable neuron spatial map visualizations (density, amplitude, combined PDFs) - disabled by default
+**Analysis Selection Flag** (available in both scripts):
+- `--analysis <list>`: Comma-separated list of analyses to run
+  - **Valid analyses**: `probe`, `waveforms`, `raster`, `burst`, `spatial`
+  - **Presets**: `default` (probe,waveforms,raster,burst), `all`, `minimal` (burst only), `none`
+  - **Examples**:
+    - `--analysis default,spatial` - Run all default analyses plus spatial maps
+    - `--analysis burst` - Only burst metrics (no plots)
+    - `--analysis raster` - Raster plots (auto-enables burst)
+    - `--analysis all` - All analyses including spatial
+  - **Note**: If `raster` is specified, `burst` is auto-enabled (required for plot data)
 
 **run_pipeline_driver.py** (additional):
 - `--reference`: Excel file for filtering runs
@@ -286,6 +290,7 @@ python run_pipeline_driver.py /path/to/data/directory \
 4. **REPORTS**: Quality metrics → Curation → Burst detection → Visualizations → JSON export
 
 ### Quality Thresholds (sorting_quality_threshold_params.json)
+- `num_spikes > 300`: Minimum spike count
 - `presence_ratio > 0.9`: Unit active throughout recording
 - `rp_contamination < 1.0`: Refractory period violations
 - `firing_rate > 0.05 Hz`: Minimum activity
