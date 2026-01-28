@@ -3,6 +3,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks, peak_widths
 import matplotlib.pyplot as plt
 import helper_functions as helper
+from Yuxin_burst_detection import burst_silence_filter1d
 
 def compute_network_bursts(
     ax_raster=None,
@@ -71,13 +72,44 @@ def compute_network_bursts(
     # ---------------------------
     # 3. Dual Smoothing
     # ---------------------------
-    sigma_min_bins = max(1.0, smoothing_min_ms / adaptive_bin_ms)
-    sigma_slow_bins = max(sigma_min_bins, 5.0 * biological_isi_s / bin_size)
-    sigma_fast_bins = np.clip(sigma_slow_bins / 5.0, 1.0, 5.0)
-    
-    ws_onset = gaussian_filter1d(W, sigma_fast_bins)
-    ws_peak  = gaussian_filter1d(W, sigma_slow_bins)
-    
+    # === ORIGINAL GAUSSIAN SMOOTHING (commented out) ===
+    # sigma_min_bins = max(1.0, smoothing_min_ms / adaptive_bin_ms)
+    # sigma_slow_bins = max(sigma_min_bins, 5.0 * biological_isi_s / bin_size)
+    # sigma_fast_bins = np.clip(sigma_slow_bins / 5.0, 1.0, 5.0)
+    #
+    # ws_onset = gaussian_filter1d(W, sigma_fast_bins)
+    # ws_peak  = gaussian_filter1d(W, sigma_slow_bins)
+    # === END ORIGINAL GAUSSIAN SMOOTHING ===
+
+    # === BURST-SILENCE KERNEL SMOOTHING ===
+    # Sampling frequency for the binned signal (bins per second)
+    fs_hz = 1.0 / bin_size
+
+    # Adaptive burst/silence window durations based on biological ISI
+    # burst_ms: window to capture synchronized firing (adaptive to ISI)
+    # silence_ms: window to detect the quiet period after burst (longer than burst)
+    burst_ms_adaptive = max(smoothing_min_ms, 2.0 * biological_isi_s * 1000.0)
+    silence_ms_adaptive = max(smoothing_min_ms * 2.0, 4.0 * biological_isi_s * 1000.0)
+
+    # Fast signal for onset detection (shorter windows)
+    ws_onset = burst_silence_filter1d(
+        W,
+        fs_hz=fs_hz,
+        burst_ms=burst_ms_adaptive,
+        silence_ms=silence_ms_adaptive,
+        normalize=True
+    )
+
+    # Slow signal for peak detection (longer windows)
+    ws_peak = burst_silence_filter1d(
+        W,
+        fs_hz=fs_hz,
+        burst_ms=burst_ms_adaptive * 2.0,
+        silence_ms=silence_ms_adaptive * 2.0,
+        normalize=True
+    )
+    # === END BURST-SILENCE KERNEL SMOOTHING ===
+
     burstlet_merge_gap_s = 2.0 * biological_isi_s
     network_merge_gap_s  = 5.0 * biological_isi_s
 
