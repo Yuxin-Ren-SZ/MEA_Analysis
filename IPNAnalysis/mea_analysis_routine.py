@@ -658,7 +658,7 @@ class MEAPipeline:
                     os.replace(temp_file, final_file)
                     self.logger.info(f"Successfully saved: {final_file}")
 
-                plot_Mode = 'seperate'
+                plot_Mode = 'separate'
 
                 if plot_Mode == 'separate':
                     fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
