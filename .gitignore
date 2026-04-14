@@ -26,6 +26,7 @@ nohup.out
 **.raw
 si_ks4/
 IPNAnalysis/kilosort_output/sorter_output/
+IPNAnalysis/workbooks/Yuxin/plate_exports/
 NetworkAnalysis/ActivityQuality/*.csv
 kilosort4_output/
 Connections/pyuoi/*
@@ -43,4 +44,3 @@ pip-wheel-metadata/
 .ruff_cache/
 __pycache__/
 *.py[cod]
-

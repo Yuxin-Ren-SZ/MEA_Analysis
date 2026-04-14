@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass
 from functools import lru_cache
 from html import escape
 from pathlib import Path
@@ -17,6 +19,30 @@ PLATE_COLS = 6
 PLATE_WELL_COUNT = PLATE_ROWS * PLATE_COLS
 ROW_LABELS = ["A", "B", "C", "D"]
 DISPLAY_MODES = {"raster", "synchrony", "both"}
+INDEX_COLUMNS = [
+    "root_dir",
+    "scan_dir",
+    "scan_id",
+    "run_id",
+    "scan_label",
+    "well_id",
+    "plate_label",
+    "row",
+    "col",
+    "spike_times_path",
+    "network_json_path",
+    "has_spike_times",
+    "has_network_json",
+]
+MANIFEST_COLUMNS = [
+    "run_id",
+    "scan_id",
+    "scan_label",
+    "scan_dir",
+    "n_wells",
+    "missing_spike_times",
+    "missing_network_json",
+]
 PLATE_HORIZONTAL_SPACING = 0.03
 PLATE_VERTICAL_SPACING = 0.08
 FIGURE_MARGIN_LR_PX = 90
@@ -30,12 +56,17 @@ TITLE_Y = 0.98
 TITLE_FONT_SIZE = 16
 LEGEND_Y = 1.15
 LEGEND_FONT_SIZE = 11
-CONTROL_ROW_Y = 1.115
-MODE_BUTTONS_X = 0.00
+MODE_BUTTONS_X = 0.0
 MODE_BUTTONS_Y = 1.30
-SLIDER_X = 0.00
+SLIDER_X = 0.0
 SLIDER_Y = 1.25
 SLIDER_LEN = 0.25
+DEFAULT_VIEWER_WIDTH_PX = 2400
+DEFAULT_VIEWER_MAX_RASTER_POINTS = 12000
+DEFAULT_VIEWER_MAX_SYNCHRONY_POINTS = 3000
+DEFAULT_INITIAL_WINDOW_S = 300.0
+DEFAULT_EXPORT_WIDTH_IN = 24.0
+DEFAULT_EXPORT_DPI = 600
 
 
 def _normalize_run_id(value: Any) -> str | None:
@@ -56,6 +87,47 @@ def _run_sort_key(value: Any) -> tuple[int, str, str]:
     if digits:
         return (0, f"{int(digits):09d}", normalized)
     return (1, normalized.lower(), normalized)
+
+
+def _validate_display_mode(display_mode: str) -> None:
+    if display_mode not in DISPLAY_MODES:
+        raise ValueError(f"display_mode must be one of {DISPLAY_MODES}")
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerConfig:
+    display_mode: str = "both"
+    marker_size: float = 5.0
+    line_width: float = 1.25
+    unit_sort_mode: str = "firing_rate_desc"
+    max_raster_points_per_well: int | None = DEFAULT_VIEWER_MAX_RASTER_POINTS
+    max_synchrony_points: int | None = DEFAULT_VIEWER_MAX_SYNCHRONY_POINTS
+    width_px: int = DEFAULT_VIEWER_WIDTH_PX
+    height_px: int | None = None
+    initial_window_s: float | None = DEFAULT_INITIAL_WINDOW_S
+
+    def __post_init__(self) -> None:
+        _validate_display_mode(self.display_mode)
+
+
+@dataclass(frozen=True, slots=True)
+class ExportConfig:
+    output_dir: str | Path
+    dpi: int = DEFAULT_EXPORT_DPI
+    width_in: float = DEFAULT_EXPORT_WIDTH_IN
+    height_in: float | None = None
+    export_html: bool = True
+    export_png: bool = True
+
+    @property
+    def resolved_output_dir(self) -> Path:
+        return Path(self.output_dir).expanduser().resolve()
+
+    @property
+    def resolved_height_in(self) -> float:
+        if self.height_in is not None:
+            return float(self.height_in)
+        return compute_plate_height_px(int(float(self.width_in) * 100)) / 100.0
 
 
 def well_to_plate_position(well_id: str) -> tuple[int, int, str]:
@@ -92,46 +164,33 @@ def discover_well_records(root_dir: str | Path) -> pd.DataFrame:
             row_idx, col_idx, plate_label = well_to_plate_position(well_dir.name)
         except ValueError:
             continue
+
         raw_scan_id = scan_dir.name
         run_id = _normalize_run_id(raw_scan_id) or raw_scan_id
         spike_path = well_dir / "spike_times.npy"
-        network_json = well_dir / "network_results.json"
+        network_json_path = well_dir / "network_results.json"
+        resolved_scan_dir = str(scan_dir.resolve())
+
         rows.append(
             {
                 "root_dir": str(root),
-                "scan_dir": str(scan_dir.resolve()),
+                "scan_dir": resolved_scan_dir,
                 "scan_id": raw_scan_id,
                 "run_id": run_id,
-                "scan_label": scan_context_label(scan_dir.resolve()),
+                "scan_label": scan_context_label(Path(resolved_scan_dir)),
                 "well_id": well_dir.name,
                 "plate_label": plate_label,
                 "row": row_idx,
                 "col": col_idx,
                 "spike_times_path": str(spike_path),
-                "network_json_path": str(network_json),
+                "network_json_path": str(network_json_path),
                 "has_spike_times": spike_path.exists(),
-                "has_network_json": network_json.exists(),
+                "has_network_json": network_json_path.exists(),
             }
         )
 
     if not rows:
-        return pd.DataFrame(
-            columns=[
-                "root_dir",
-                "scan_dir",
-                "scan_id",
-                "run_id",
-                "scan_label",
-                "well_id",
-                "plate_label",
-                "row",
-                "col",
-                "spike_times_path",
-                "network_json_path",
-                "has_spike_times",
-                "has_network_json",
-            ]
-        )
+        return pd.DataFrame(columns=INDEX_COLUMNS)
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["scan_dir", "well_id"]).reset_index(drop=True)
     out["_run_sort_key"] = out["run_id"].apply(_run_sort_key)
@@ -141,19 +200,10 @@ def discover_well_records(root_dir: str | Path) -> pd.DataFrame:
 
 def build_run_manifest(index_df: pd.DataFrame) -> pd.DataFrame:
     if index_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "run_id",
-                "scan_label",
-                "scan_dir",
-                "n_wells",
-                "missing_spike_times",
-                "missing_network_json",
-            ]
-        )
+        return pd.DataFrame(columns=MANIFEST_COLUMNS)
 
     manifest = (
-        index_df.groupby(["run_id", "scan_label", "scan_dir"], as_index=False)
+        index_df.groupby(["run_id", "scan_id", "scan_label", "scan_dir"], as_index=False)
         .agg(
             n_wells=("well_id", "nunique"),
             missing_spike_times=("has_spike_times", lambda s: int((~s).sum())),
@@ -166,34 +216,13 @@ def build_run_manifest(index_df: pd.DataFrame) -> pd.DataFrame:
     return manifest.reset_index(drop=True)
 
 
-def summarize_scans(index_df: pd.DataFrame) -> pd.DataFrame:
-    return build_run_manifest(index_df)
-
-
-def choose_notebook_renderer(preferred: str = "iframe_connected") -> str:
-    available = set(pio.renderers)
-    candidates = [
-        preferred,
-        "iframe_connected",
-        "notebook_connected",
-        "notebook",
-        "plotly_mimetype",
-        "iframe",
-        "browser",
-    ]
-    for renderer in candidates:
-        if renderer in available:
-            return renderer
-    return pio.renderers.default or "browser"
-
-
 @lru_cache(maxsize=512)
 def _load_spike_times_cached(spike_path: str) -> dict[str, np.ndarray]:
     loaded = np.load(spike_path, allow_pickle=True)
     data = loaded.item() if hasattr(loaded, "item") else loaded
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected spike_times payload at {spike_path}")
-    return {str(k): np.asarray(v, dtype=float) for k, v in data.items()}
+    return {str(key): np.asarray(value, dtype=float) for key, value in data.items()}
 
 
 def load_spike_times(spike_path: str | Path) -> dict[str, np.ndarray]:
@@ -219,11 +248,11 @@ def sort_units(spike_times: dict[str, np.ndarray], mode: str = "firing_rate_desc
     if mode == "native":
         return list(spike_times.keys())
 
-    def last_time(arr: np.ndarray) -> float:
-        return float(arr[-1]) if arr.size else 0.0
+    def last_time(values: np.ndarray) -> float:
+        return float(values[-1]) if values.size else 0.0
 
     if mode == "firing_rate_desc":
-        duration = max((last_time(v) for v in spike_times.values()), default=1.0) or 1.0
+        duration = max((last_time(values) for values in spike_times.values()), default=1.0) or 1.0
         return sorted(spike_times.keys(), key=lambda unit: len(spike_times[unit]) / duration, reverse=True)
 
     return sorted(spike_times.keys(), key=str)
@@ -508,7 +537,7 @@ def _build_xspan_slider(global_xmax: float, initial_window_s: float | None) -> t
         return [], 0.0
 
     max_window = max(1, int(np.floor(global_xmax)))
-    min_window = 60 if max_window >= 60 else max_window
+    min_window = 1 if max_window >= 1 else max_window
     window_values = list(range(min_window, max_window + 1))
     if not window_values:
         window_values = [max_window]
@@ -613,77 +642,12 @@ def _annotate_missing_panel(fig: go.Figure, row: int, col: int, text: str, *, x:
     )
 
 
-def create_run_figure(
-    index_df: pd.DataFrame,
-    run_id: str | int,
-    *,
-    display_mode: str = "both",
-    marker_size: float = 5.0,
-    line_width: float = 1.25,
-    width_px: int = 2400,
-    height_px: int | None = None,
-    unit_sort_mode: str = "firing_rate_desc",
-    max_raster_points_per_well: int | None = None,
-    max_synchrony_points: int | None = None,
-    title: str | None = None,
-    initial_window_s: float | None = None,
-) -> go.Figure:
-    manifest = build_run_manifest(index_df)
-    if manifest.empty:
-        raise RuntimeError("No runs found. Check the analysis root and expected Network/<run_id>/wellXYZ layout.")
-
-    normalized_run_id = _normalize_run_id(run_id)
-    matches = manifest[manifest["run_id"] == normalized_run_id].copy()
-    if matches.empty:
-        raise ValueError(f"No run found for run_id={run_id!r}")
-    if len(matches) > 1:
-        raise ValueError(
-            f"run_id={normalized_run_id!r} is not unique in this root. Use create_scan_figure(..., scan_dir=...) instead."
-        )
-
-    scan_row = matches.iloc[0]
-    return create_scan_figure(
-        index_df,
-        scan_row["scan_dir"],
-        display_mode=display_mode,
-        marker_size=marker_size,
-        line_width=line_width,
-        width_px=width_px,
-        height_px=height_px,
-        unit_sort_mode=unit_sort_mode,
-        max_raster_points_per_well=max_raster_points_per_well,
-        max_synchrony_points=max_synchrony_points,
-        title=title,
-        initial_window_s=initial_window_s,
-    )
-
-
-def create_scan_figure(
-    index_df: pd.DataFrame,
-    scan_dir: str | Path,
-    *,
-    display_mode: str = "both",
-    marker_size: float = 5.0,
-    line_width: float = 1.25,
-    width_px: int = 2400,
-    height_px: int | None = None,
-    unit_sort_mode: str = "firing_rate_desc",
-    max_raster_points_per_well: int | None = None,
-    max_synchrony_points: int | None = None,
-    title: str | None = None,
-    initial_window_s: float | None = None,
-) -> go.Figure:
-    if display_mode not in DISPLAY_MODES:
-        raise ValueError(f"display_mode must be one of {DISPLAY_MODES}")
-
-    scan_dir = str(Path(scan_dir).expanduser().resolve())
-    scan_df = index_df[index_df["scan_dir"] == scan_dir].copy()
-    if scan_df.empty:
-        raise ValueError(f"No wells found for scan: {scan_dir}")
-
-    run_id = scan_df["run_id"].iloc[0] if "run_id" in scan_df.columns else scan_df["scan_id"].iloc[0]
+def _build_scan_figure(scan_df: pd.DataFrame, viewer_config: ViewerConfig, title: str | None = None) -> go.Figure:
+    _validate_display_mode(viewer_config.display_mode)
     label = title or scan_df["scan_label"].iloc[0]
-    fig = _make_plate_figure(title=f"Plate Raster + Synchrony: {label}", width_px=width_px, height_px=height_px)
+    run_id = scan_df["run_id"].iloc[0] if "run_id" in scan_df.columns else scan_df["scan_id"].iloc[0]
+    scan_id = scan_df["scan_id"].iloc[0]
+    fig = _make_plate_figure(title=f"Plate Raster + Synchrony: {label}", width_px=viewer_config.width_px, height_px=viewer_config.height_px)
 
     trace_roles: list[str] = []
     legend_state = {"raster": False, "synchrony": False}
@@ -716,13 +680,13 @@ def create_scan_figure(
                 load_spike_times(record["spike_times_path"]),
                 well_id=well_id,
                 plate_label=plate_label,
-                unit_sort_mode=unit_sort_mode,
-                max_points_per_well=max_raster_points_per_well,
+                unit_sort_mode=viewer_config.unit_sort_mode,
+                max_points_per_well=viewer_config.max_raster_points_per_well,
             )
             primary_y_ranges[(row, col)] = float(unit_count + 1)
             global_xmax = max(global_xmax, spike_xmax)
             for trace in raster_traces:
-                trace.marker.size = marker_size
+                trace.marker.size = viewer_config.marker_size
                 if not legend_state["raster"]:
                     trace.showlegend = True
                     legend_state["raster"] = True
@@ -737,8 +701,8 @@ def create_scan_figure(
                 load_network_plot_data(record["network_json_path"]),
                 well_id=well_id,
                 plate_label=plate_label,
-                line_width=line_width,
-                max_points=max_synchrony_points,
+                line_width=viewer_config.line_width,
+                max_points=viewer_config.max_synchrony_points,
             )
             secondary_y_ranges[(row, col)] = float(sync_ymax * 1.1)
             global_xmax = max(global_xmax, sync_xmax)
@@ -755,7 +719,8 @@ def create_scan_figure(
         if not raster_loaded and not sync_loaded:
             _annotate_missing_panel(fig, row, col, "No plot data")
         elif not raster_loaded or not sync_loaded:
-            _annotate_missing_panel(fig, row, col, "raster missing" if not raster_loaded else "synchrony missing", x=0.98, y=0.95)
+            missing_text = "raster missing" if not raster_loaded else "synchrony missing"
+            _annotate_missing_panel(fig, row, col, missing_text, x=0.98, y=0.95)
 
     fig.update_xaxes(matches="x", showgrid=True, rangeslider_visible=False)
     fig.update_yaxes(matches=None, fixedrange=True)
@@ -780,13 +745,9 @@ def create_scan_figure(
                 col=col,
                 secondary_y=True,
             )
-            fig.update_xaxes(
-                title_text="Time (s)" if row == PLATE_ROWS else None,
-                row=row,
-                col=col,
-            )
+            fig.update_xaxes(title_text="Time (s)" if row == PLATE_ROWS else None, row=row, col=col)
 
-    sliders, window_end = _build_xspan_slider(global_xmax, initial_window_s)
+    sliders, window_end = _build_xspan_slider(global_xmax, viewer_config.initial_window_s)
     if window_end > 0:
         fig.update_xaxes(range=[0.0, window_end])
 
@@ -795,12 +756,12 @@ def create_scan_figure(
         "raster": [role == "raster" for role in trace_roles],
         "synchrony": [role == "synchrony" for role in trace_roles],
     }
-    for trace, visible in zip(fig.data, mode_visibility[display_mode]):
+    for trace, visible in zip(fig.data, mode_visibility[viewer_config.display_mode]):
         trace.visible = visible
 
     fig.update_layout(
         title=dict(
-            text=f"Plate Raster + Synchrony: {label}<br><sup>run_id={run_id}</sup>",
+            text=f"Plate Raster + Synchrony: {label}<br><sup>run_id={run_id} | scan_id={scan_id}</sup>",
             x=0.5,
             xanchor="center",
             y=TITLE_Y,
@@ -852,132 +813,27 @@ def _figure_to_iframe_markup(fig: go.Figure) -> str:
     )
 
 
-def render_run_viewer(
-    index_df: pd.DataFrame,
-    *,
-    display_mode: str = "both",
-    marker_size: float = 5.0,
-    line_width: float = 1.25,
-    width_px: int = 2400,
-    height_px: int | None = None,
-    unit_sort_mode: str = "firing_rate_desc",
-    max_raster_points_per_well: int | None = None,
-    max_synchrony_points: int | None = None,
-    initial_run_id: str | int | None = None,
-    initial_window_s: float | None = None,
-    preferred_renderer: str = "notebook_connected",
-) -> Any:
-    try:
-        import ipywidgets as widgets
-    except ImportError as exc:
-        raise ImportError(
-            "render_run_viewer requires ipywidgets. Install it with `pip install ipywidgets` "
-            "or `pip install -r requirements.txt`, then restart the notebook kernel."
-        ) from exc
-    _ = preferred_renderer  # Preserved for notebook compatibility; the viewer now updates one iframe in place.
-
-    manifest = build_run_manifest(index_df)
-    if manifest.empty:
-        raise RuntimeError("No runs found. Check ANALYSIS_ROOT and the expected directory pattern.")
-
-    manifest_by_scan_dir = manifest.set_index("scan_dir", drop=False)
-    if initial_run_id is None:
-        initial_scan_dir = manifest.iloc[0]["scan_dir"]
-    else:
-        normalized = _normalize_run_id(initial_run_id)
-        run_matches = manifest[manifest["run_id"] == normalized]
-        if run_matches.empty:
-            raise ValueError(f"initial_run_id={initial_run_id!r} was not found in the manifest.")
-        initial_scan_dir = run_matches.iloc[0]["scan_dir"]
-
-    dropdown_options = [
-        (
-            f"{row.run_id} | {row.scan_label}",
-            row.scan_dir,
-        )
-        for row in manifest.itertuples(index=False)
-    ]
-    run_dropdown = widgets.Dropdown(
-        options=dropdown_options,
-        value=initial_scan_dir,
-        description="run_id",
-        layout=widgets.Layout(width="95%"),
-        style={"description_width": "72px"},
-    )
-    status_html = widgets.HTML()
-    figure_html = widgets.HTML(layout=widgets.Layout(width="100%"))
-    figure_markup_cache: dict[str, str] = {}
-
-    def _render(scan_dir: str) -> None:
-        row = manifest_by_scan_dir.loc[scan_dir]
-        status_html.value = (
-            "<div>"
-            f"<b>run_id:</b> {escape(str(row['run_id']))} &nbsp; "
-            f"<b>wells:</b> {int(row['n_wells'])} &nbsp; "
-            f"<b>missing spikes:</b> {int(row['missing_spike_times'])} &nbsp; "
-            f"<b>missing synchrony:</b> {int(row['missing_network_json'])}"
-            f"<br><code>{escape(str(row['scan_label']))}</code>"
-            "</div>"
-        )
-        if scan_dir not in figure_markup_cache:
-            figure = create_scan_figure(
-                index_df,
-                scan_dir,
-                display_mode=display_mode,
-                marker_size=marker_size,
-                line_width=line_width,
-                width_px=width_px,
-                height_px=height_px,
-                unit_sort_mode=unit_sort_mode,
-                max_raster_points_per_well=max_raster_points_per_well,
-                max_synchrony_points=max_synchrony_points,
-                initial_window_s=initial_window_s,
-            )
-            figure_markup_cache[scan_dir] = _figure_to_iframe_markup(figure)
-        figure_html.value = figure_markup_cache[scan_dir]
-
-    def _on_run_change(change: dict[str, Any]) -> None:
-        if change.get("name") == "value" and change.get("new"):
-            _render(str(change["new"]))
-
-    run_dropdown.observe(_on_run_change, names="value")
-    _render(str(initial_scan_dir))
-
-    return widgets.VBox(
-        [
-            widgets.HTML("<b>Plate viewer</b>"),
-            run_dropdown,
-            status_html,
-            figure_html,
-        ]
-    )
+def _sanitize_filename_part(value: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
+    text = text.strip("._")
+    return text or "scan"
 
 
-def export_scan_figure(
-    fig: go.Figure,
-    *,
-    output_dir: str | Path,
-    stem: str,
-    export_png: bool = True,
-    export_html: bool = True,
-    dpi: int = 600,
-    width_in: float = 24.0,
-    height_in: float = compute_plate_height_px(2400) / 100.0,
-) -> dict[str, Path]:
-    out_dir = Path(output_dir).expanduser().resolve()
+def _export_figure(fig: go.Figure, export_config: ExportConfig, *, stem: str) -> dict[str, Path]:
+    out_dir = export_config.resolved_output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     exported: dict[str, Path] = {}
 
-    base_width_px = max(1200, int(width_in * 100))
-    base_height_px = max(800, int(height_in * 100))
-    scale = max(1.0, float(dpi) / 100.0)
+    base_width_px = max(1200, int(float(export_config.width_in) * 100))
+    base_height_px = max(800, int(float(export_config.resolved_height_in) * 100))
+    scale = max(1.0, float(export_config.dpi) / 100.0)
 
-    if export_html:
+    if export_config.export_html:
         html_path = out_dir / f"{stem}.html"
         fig.write_html(html_path, include_plotlyjs=True, full_html=True)
         exported["html"] = html_path
 
-    if export_png:
+    if export_config.export_png:
         png_path = out_dir / f"{stem}.png"
         try:
             fig.write_image(
@@ -996,58 +852,177 @@ def export_scan_figure(
     return exported
 
 
-def export_all_scans(
-    index_df: pd.DataFrame,
-    *,
-    output_dir: str | Path,
-    display_mode: str = "both",
-    dpi: int = 600,
-    width_in: float = 24.0,
-    height_in: float = compute_plate_height_px(2400) / 100.0,
-    marker_size: float = 5.0,
-    line_width: float = 1.25,
-    unit_sort_mode: str = "firing_rate_desc",
-    max_raster_points_per_well: int | None = None,
-    max_synchrony_points: int | None = None,
-    export_html: bool = True,
-    export_png: bool = True,
-    initial_window_s: float | None = None,
-) -> list[dict[str, str]]:
-    exports: list[dict[str, str]] = []
-    preview_width_px = max(1200, int(width_in * 100))
-    preview_height_px = max(800, int(height_in * 100))
+class PlateRasterSynchronyViewer:
+    def __init__(self, index_df: pd.DataFrame, viewer_config: ViewerConfig | None = None):
+        self.viewer_config = viewer_config or ViewerConfig()
+        self.index_df = index_df.copy().reset_index(drop=True)
+        self.manifest_df = build_run_manifest(self.index_df)
+        self._manifest_by_scan_dir = self.manifest_df.set_index("scan_dir", drop=False) if not self.manifest_df.empty else None
+        self._duplicate_run_ids = {
+            str(value)
+            for value in self.manifest_df["run_id"][self.manifest_df["run_id"].duplicated(keep=False)].tolist()
+        }
+        self._figure_markup_cache: dict[str, str] = {}
+        self._current_scan_dir: str | None = None
 
-    for row in build_run_manifest(index_df).itertuples(index=False):
-        fig = create_scan_figure(
-            index_df,
-            row.scan_dir,
-            display_mode=display_mode,
-            marker_size=marker_size,
-            line_width=line_width,
-            width_px=preview_width_px,
-            height_px=preview_height_px,
-            unit_sort_mode=unit_sort_mode,
-            max_raster_points_per_well=max_raster_points_per_well,
-            max_synchrony_points=max_synchrony_points,
-            initial_window_s=initial_window_s,
+    @classmethod
+    def from_analysis_root(
+        cls,
+        root_dir: str | Path,
+        viewer_config: ViewerConfig | None = None,
+    ) -> PlateRasterSynchronyViewer:
+        return cls(discover_well_records(root_dir), viewer_config=viewer_config)
+
+    @property
+    def current_scan_dir(self) -> str | None:
+        return self._current_scan_dir
+
+    def _ensure_manifest(self) -> None:
+        if self.manifest_df.empty or self._manifest_by_scan_dir is None:
+            raise RuntimeError("No scans found. Check ANALYSIS_ROOT and the expected directory pattern.")
+
+    def _resolve_manifest_row(self, scan_dir: str | Path) -> pd.Series:
+        self._ensure_manifest()
+        normalized_scan_dir = str(Path(scan_dir).expanduser().resolve())
+        if normalized_scan_dir not in self._manifest_by_scan_dir.index:
+            raise ValueError(f"No scan found for scan_dir={normalized_scan_dir!r}")
+        row = self._manifest_by_scan_dir.loc[normalized_scan_dir]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        return row
+
+    def _default_export_stem(self, row: pd.Series | dict[str, Any]) -> str:
+        run_id = str(row["run_id"])
+        scan_id = str(row["scan_id"])
+        run_part = _sanitize_filename_part(run_id)
+        scan_part = _sanitize_filename_part(scan_id)
+        if run_id in self._duplicate_run_ids and scan_part != run_part:
+            return f"{run_part}__{scan_part}_plate_overlay"
+        if run_id in self._duplicate_run_ids:
+            label_part = _sanitize_filename_part(Path(str(row["scan_dir"])).name)
+            return f"{run_part}__{label_part}_plate_overlay"
+        return f"{run_part}_plate_overlay"
+
+    def resolve_scan_dir(self, run_id: str | int) -> str:
+        self._ensure_manifest()
+        normalized_run_id = _normalize_run_id(run_id)
+        matches = self.manifest_df[self.manifest_df["run_id"] == normalized_run_id]
+        if matches.empty:
+            raise ValueError(f"No scan found for run_id={run_id!r}")
+        if len(matches) > 1:
+            raise ValueError(
+                f"run_id={normalized_run_id!r} is not unique. Use `manifest_df['scan_dir']` to select a specific scan."
+            )
+        return str(matches.iloc[0]["scan_dir"])
+
+    def figure_for_scan(self, scan_dir: str | Path) -> go.Figure:
+        row = self._resolve_manifest_row(scan_dir)
+        normalized_scan_dir = str(row["scan_dir"])
+        scan_df = self.index_df[self.index_df["scan_dir"] == normalized_scan_dir].copy()
+        if scan_df.empty:
+            raise ValueError(f"No wells found for scan_dir={normalized_scan_dir!r}")
+        self._current_scan_dir = normalized_scan_dir
+        return _build_scan_figure(scan_df, self.viewer_config)
+
+    def render_widget(self, initial_scan_dir: str | Path | None = None) -> Any:
+        try:
+            import ipywidgets as widgets
+        except ImportError as exc:
+            raise ImportError(
+                "render_widget requires ipywidgets. Install it with `pip install ipywidgets` "
+                "or `pip install -r requirements.txt`, then restart the notebook kernel."
+            ) from exc
+
+        self._ensure_manifest()
+        if initial_scan_dir is None:
+            resolved_initial_scan_dir = str(self.manifest_df.iloc[0]["scan_dir"])
+        else:
+            resolved_initial_scan_dir = str(self._resolve_manifest_row(initial_scan_dir)["scan_dir"])
+
+        dropdown_options = [
+            (f"{row.run_id} | {row.scan_label}", row.scan_dir)
+            for row in self.manifest_df.itertuples(index=False)
+        ]
+        scan_dropdown = widgets.Dropdown(
+            options=dropdown_options,
+            value=resolved_initial_scan_dir,
+            description="scan",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "72px"},
         )
-        stem = f"{row.run_id}_plate_overlay"
-        exported = export_scan_figure(
-            fig,
-            output_dir=output_dir,
-            stem=stem,
-            export_png=export_png,
-            export_html=export_html,
-            dpi=dpi,
-            width_in=width_in,
-            height_in=height_in,
-        )
-        exports.append(
-            {
-                "run_id": str(row.run_id),
-                "scan_dir": str(row.scan_dir),
-                **{key: str(value) for key, value in exported.items()},
-            }
+        status_html = widgets.HTML()
+        figure_html = widgets.HTML(layout=widgets.Layout(width="100%"))
+
+        def _render(scan_dir_value: str) -> None:
+            row = self._resolve_manifest_row(scan_dir_value)
+            normalized_scan_dir = str(row["scan_dir"])
+            self._current_scan_dir = normalized_scan_dir
+            status_html.value = (
+                "<div>"
+                f"<b>run_id:</b> {escape(str(row['run_id']))} &nbsp; "
+                f"<b>scan_id:</b> {escape(str(row['scan_id']))} &nbsp; "
+                f"<b>wells:</b> {int(row['n_wells'])} &nbsp; "
+                f"<b>missing spikes:</b> {int(row['missing_spike_times'])} &nbsp; "
+                f"<b>missing synchrony:</b> {int(row['missing_network_json'])}"
+                f"<br><code>{escape(str(row['scan_label']))}</code>"
+                "</div>"
+            )
+            if normalized_scan_dir not in self._figure_markup_cache:
+                self._figure_markup_cache[normalized_scan_dir] = _figure_to_iframe_markup(
+                    self.figure_for_scan(normalized_scan_dir)
+                )
+            figure_html.value = self._figure_markup_cache[normalized_scan_dir]
+
+        def _on_scan_change(change: dict[str, Any]) -> None:
+            if change.get("name") == "value" and change.get("new"):
+                _render(str(change["new"]))
+
+        scan_dropdown.observe(_on_scan_change, names="value")
+        _render(resolved_initial_scan_dir)
+
+        return widgets.VBox(
+            [
+                widgets.HTML("<b>Plate viewer</b>"),
+                scan_dropdown,
+                status_html,
+                figure_html,
+            ]
         )
 
-    return exports
+    def export_scan(
+        self,
+        scan_dir: str | Path,
+        export_config: ExportConfig,
+        stem: str | None = None,
+    ) -> dict[str, Path]:
+        row = self._resolve_manifest_row(scan_dir)
+        export_stem = stem or self._default_export_stem(row)
+        fig = self.figure_for_scan(str(row["scan_dir"]))
+        return _export_figure(fig, export_config, stem=export_stem)
+
+    def export_all(self, export_config: ExportConfig) -> list[dict[str, str]]:
+        self._ensure_manifest()
+        exports: list[dict[str, str]] = []
+        for row in self.manifest_df.itertuples(index=False):
+            row_dict = row._asdict()
+            exported = self.export_scan(str(row.scan_dir), export_config, stem=self._default_export_stem(row_dict))
+            exports.append(
+                {
+                    "run_id": str(row.run_id),
+                    "scan_id": str(row.scan_id),
+                    "scan_dir": str(row.scan_dir),
+                    **{key: str(value) for key, value in exported.items()},
+                }
+            )
+        return exports
+
+
+__all__ = [
+    "DISPLAY_MODES",
+    "ExportConfig",
+    "PlateRasterSynchronyViewer",
+    "ViewerConfig",
+    "build_run_manifest",
+    "compute_plate_height_px",
+    "discover_well_records",
+]
