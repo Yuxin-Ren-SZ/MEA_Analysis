@@ -17,6 +17,11 @@ PLATE_COLS = 6
 PLATE_WELL_COUNT = PLATE_ROWS * PLATE_COLS
 ROW_LABELS = ["A", "B", "C", "D"]
 DISPLAY_MODES = {"raster", "synchrony", "both"}
+PLATE_HORIZONTAL_SPACING = 0.03
+PLATE_VERTICAL_SPACING = 0.08
+FIGURE_MARGIN_LR_PX = 90
+FIGURE_MARGIN_TB_PX = 240
+TARGET_PANEL_WIDTH_TO_HEIGHT = 2.0
 RASTER_MARKER_SYMBOL = "line-ns-open"
 RASTER_MARKER_COLOR = "rgba(90, 90, 90, 0.75)"
 
@@ -525,20 +530,44 @@ def _build_xspan_slider(global_xmax: float, initial_window_s: float | None) -> t
     return [slider], float(window_values[active_index])
 
 
-def _make_plate_figure(title: str, width_px: int, height_px: int) -> go.Figure:
+def _panel_domain_fraction(count: int, spacing: float) -> float:
+    return (1.0 - (count - 1) * spacing) / count
+
+
+def compute_plate_height_px(
+    width_px: int,
+    *,
+    target_panel_width_to_height: float = TARGET_PANEL_WIDTH_TO_HEIGHT,
+) -> int:
+    effective_width_px = max(width_px, FIGURE_MARGIN_LR_PX + 1)
+    inner_width_px = max(1.0, float(effective_width_px - FIGURE_MARGIN_LR_PX))
+    panel_width_frac = _panel_domain_fraction(PLATE_COLS, PLATE_HORIZONTAL_SPACING)
+    panel_height_frac = _panel_domain_fraction(PLATE_ROWS, PLATE_VERTICAL_SPACING)
+    inner_height_px = inner_width_px * panel_width_frac / (target_panel_width_to_height * panel_height_frac)
+    return max(480, int(round(inner_height_px + FIGURE_MARGIN_TB_PX)))
+
+
+def _resolve_figure_height_px(width_px: int, height_px: int | None) -> int:
+    if height_px is not None:
+        return int(height_px)
+    return compute_plate_height_px(int(width_px))
+
+
+def _make_plate_figure(title: str, width_px: int, height_px: int | None) -> go.Figure:
     subplot_titles = [f"{row_label}{col}" for row_label in ROW_LABELS for col in range(1, PLATE_COLS + 1)]
+    resolved_height_px = _resolve_figure_height_px(width_px, height_px)
     fig = make_subplots(
         rows=PLATE_ROWS,
         cols=PLATE_COLS,
         specs=[[{"secondary_y": True} for _ in range(PLATE_COLS)] for _ in range(PLATE_ROWS)],
         subplot_titles=subplot_titles,
-        horizontal_spacing=0.03,
-        vertical_spacing=0.08,
+        horizontal_spacing=PLATE_HORIZONTAL_SPACING,
+        vertical_spacing=PLATE_VERTICAL_SPACING,
     )
     fig.update_layout(
         title=dict(text=title, x=0.5),
         width=width_px,
-        height=height_px,
+        height=resolved_height_px,
         template="plotly_white",
         hovermode="closest",
         margin=dict(l=50, r=40, t=170, b=70),
@@ -570,7 +599,7 @@ def create_run_figure(
     marker_size: float = 5.0,
     line_width: float = 1.25,
     width_px: int = 2400,
-    height_px: int = 1600,
+    height_px: int | None = None,
     unit_sort_mode: str = "firing_rate_desc",
     max_raster_points_per_well: int | None = None,
     max_synchrony_points: int | None = None,
@@ -615,7 +644,7 @@ def create_scan_figure(
     marker_size: float = 5.0,
     line_width: float = 1.25,
     width_px: int = 2400,
-    height_px: int = 1600,
+    height_px: int | None = None,
     unit_sort_mode: str = "firing_rate_desc",
     max_raster_points_per_well: int | None = None,
     max_synchrony_points: int | None = None,
@@ -776,7 +805,7 @@ def render_run_viewer(
     marker_size: float = 5.0,
     line_width: float = 1.25,
     width_px: int = 2400,
-    height_px: int = 1600,
+    height_px: int | None = None,
     unit_sort_mode: str = "firing_rate_desc",
     max_raster_points_per_well: int | None = None,
     max_synchrony_points: int | None = None,
@@ -880,7 +909,7 @@ def export_scan_figure(
     export_html: bool = True,
     dpi: int = 600,
     width_in: float = 24.0,
-    height_in: float = 16.0,
+    height_in: float = compute_plate_height_px(2400) / 100.0,
 ) -> dict[str, Path]:
     out_dir = Path(output_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -921,7 +950,7 @@ def export_all_scans(
     display_mode: str = "both",
     dpi: int = 600,
     width_in: float = 24.0,
-    height_in: float = 16.0,
+    height_in: float = compute_plate_height_px(2400) / 100.0,
     marker_size: float = 5.0,
     line_width: float = 1.25,
     unit_sort_mode: str = "firing_rate_desc",
