@@ -17,6 +17,8 @@ PLATE_COLS = 6
 PLATE_WELL_COUNT = PLATE_ROWS * PLATE_COLS
 ROW_LABELS = ["A", "B", "C", "D"]
 DISPLAY_MODES = {"raster", "synchrony", "both"}
+RASTER_MARKER_SYMBOL = "line-ns-open"
+RASTER_MARKER_COLOR = "rgba(90, 90, 90, 0.75)"
 
 
 def _normalize_run_id(value: Any) -> str | None:
@@ -289,7 +291,7 @@ def _raster_points_for_well(
                 x=sampled,
                 y=np.full(sampled.shape, rank, dtype=float),
                 mode="markers",
-                marker=dict(size=4, color="rgba(75, 75, 75, 0.9)"),
+                marker=dict(symbol=RASTER_MARKER_SYMBOL, size=4, color=RASTER_MARKER_COLOR),
                 customdata=customdata,
                 hovertemplate=(
                     "%{customdata[1]} / %{customdata[0]}"
