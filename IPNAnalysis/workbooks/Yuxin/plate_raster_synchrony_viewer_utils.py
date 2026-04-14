@@ -798,6 +798,27 @@ def create_scan_figure(
     return fig
 
 
+def _figure_to_iframe_markup(fig: go.Figure) -> str:
+    figure_width = fig.layout.width
+    figure_height = fig.layout.height
+    frame_width_css = "100%" if figure_width is None else f"{int(figure_width)}px"
+    frame_height_px = max(480, int(figure_height or 900) + 18)
+    figure_html = pio.to_html(
+        fig,
+        include_plotlyjs=True,
+        full_html=True,
+        config={"responsive": False},
+    )
+    return (
+        '<div style="width:100%; overflow-x:auto; overflow-y:hidden;">'
+        f'<iframe srcdoc="{escape(figure_html)}" '
+        f'style="display:block; width:{frame_width_css}; height:{frame_height_px}px; '
+        'border:none; max-width:none;" '
+        'loading="lazy"></iframe>'
+        "</div>"
+    )
+
+
 def render_run_viewer(
     index_df: pd.DataFrame,
     *,
@@ -820,6 +841,7 @@ def render_run_viewer(
             "render_run_viewer requires ipywidgets. Install it with `pip install ipywidgets` "
             "or `pip install -r requirements.txt`, then restart the notebook kernel."
         ) from exc
+    _ = preferred_renderer  # Preserved for notebook compatibility; the viewer now updates one iframe in place.
 
     manifest = build_run_manifest(index_df)
     if manifest.empty:
@@ -850,9 +872,8 @@ def render_run_viewer(
         style={"description_width": "72px"},
     )
     status_html = widgets.HTML()
-    output = widgets.Output()
-    renderer = choose_notebook_renderer(preferred_renderer)
-    figure_cache: dict[str, go.Figure] = {}
+    figure_html = widgets.HTML(layout=widgets.Layout(width="100%"))
+    figure_markup_cache: dict[str, str] = {}
 
     def _render(scan_dir: str) -> None:
         row = manifest_by_scan_dir.loc[scan_dir]
@@ -865,8 +886,8 @@ def render_run_viewer(
             f"<br><code>{escape(str(row['scan_label']))}</code>"
             "</div>"
         )
-        if scan_dir not in figure_cache:
-            figure_cache[scan_dir] = create_scan_figure(
+        if scan_dir not in figure_markup_cache:
+            figure = create_scan_figure(
                 index_df,
                 scan_dir,
                 display_mode=display_mode,
@@ -879,9 +900,8 @@ def render_run_viewer(
                 max_synchrony_points=max_synchrony_points,
                 initial_window_s=initial_window_s,
             )
-        with output:
-            output.clear_output(wait=True)
-            figure_cache[scan_dir].show(renderer=renderer)
+            figure_markup_cache[scan_dir] = _figure_to_iframe_markup(figure)
+        figure_html.value = figure_markup_cache[scan_dir]
 
     def _on_run_change(change: dict[str, Any]) -> None:
         if change.get("name") == "value" and change.get("new"):
@@ -895,7 +915,7 @@ def render_run_viewer(
             widgets.HTML("<b>Plate viewer</b>"),
             run_dropdown,
             status_html,
-            output,
+            figure_html,
         ]
     )
 
