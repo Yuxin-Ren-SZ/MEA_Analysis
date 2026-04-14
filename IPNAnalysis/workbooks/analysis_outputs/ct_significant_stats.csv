@@ -1,0 +1,8 @@
+metric,x_value,test_type,comparison,statistic,p_value,effect_size,n_group_1,n_group_2,p_adj,group_1,group_2,other_group,metric_label
+n_units_network_json_ratio,3,welch_t,CT vs IVH-L,-4.494974669838594,0.00020755984225180168,-1.8350657246399729,12.0,12.0,0.01303348055965973,CT,IVH-L,IVH-L,n_units_network_json (ratio to baseline)
+n_units_network_json_ratio,6,welch_t,CT vs IVH-E,4.018684498969055,0.0007097021037167734,1.6406210766177425,12.0,12.0,0.027770951884569395,CT,IVH-E,IVH-E,n_units_network_json (ratio to baseline)
+network_bursts_count_ratio,3,welch_t,CT vs NPH,4.808034385454381,8.865460511239206e-05,1.9628718183532212,12.0,12.0,0.007988155622835369,CT,NPH,NPH,network_bursts_count (ratio to baseline)
+network_bursts_count_ratio,6,welch_t,CT vs NPH,6.3398008089105495,2.7761992326797774e-06,2.6389487555760383,11.0,12.0,0.0012492896547058997,CT,NPH,NPH,network_bursts_count (ratio to baseline)
+network_bursts_inter_event_interval_mean_ratio,3,welch_t,CT vs NPH,-4.928338681146759,0.00021722467599432884,-2.0119858414050933,12.0,12.0,0.01303348055965973,CT,NPH,NPH,network_bursts_inter_event_interval_mean (ratio to baseline)
+network_bursts_rate_ratio,3,welch_t,CT vs NPH,4.807663129852768,8.875728469817076e-05,1.9627202538885378,12.0,12.0,0.007988155622835369,CT,NPH,NPH,network_bursts_rate (ratio to baseline)
+network_bursts_rate_ratio,6,welch_t,CT vs NPH,6.340387522878586,2.7729561193483136e-06,2.639171625783531,11.0,12.0,0.0012492896547058997,CT,NPH,NPH,network_bursts_rate (ratio to baseline)

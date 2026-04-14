@@ -1,0 +1,11 @@
+metric,ratio_column,n_rows_total,n_rows_with_ratio,n_unique_track_wells,n_tracks_with_baseline
+network_bursts_rate,network_bursts_rate_ratio,412,380,23,23
+network_bursts_count,network_bursts_count_ratio,412,380,23,23
+network_bursts_duration_mean,network_bursts_duration_mean_ratio,412,380,23,23
+network_bursts_inter_event_interval_mean,network_bursts_inter_event_interval_mean_ratio,412,380,23,23
+network_bursts_burst_peak_mean,network_bursts_burst_peak_mean_ratio,412,380,23,23
+n_units_network_json,n_units_network_json_ratio,412,412,23,23
+unit_firing_rate,unit_firing_rate_ratio,412,412,23,23
+unit_amplitude_median,unit_amplitude_median_ratio,412,412,23,23
+template_half_width,template_half_width_ratio,412,412,23,23
+template_recovery_slope,template_recovery_slope_ratio,412,412,23,23
