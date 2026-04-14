@@ -20,10 +20,22 @@ DISPLAY_MODES = {"raster", "synchrony", "both"}
 PLATE_HORIZONTAL_SPACING = 0.03
 PLATE_VERTICAL_SPACING = 0.08
 FIGURE_MARGIN_LR_PX = 90
-FIGURE_MARGIN_TB_PX = 240
+FIGURE_MARGIN_TOP_PX = 320
+FIGURE_MARGIN_BOTTOM_PX = 70
+FIGURE_MARGIN_TB_PX = FIGURE_MARGIN_TOP_PX + FIGURE_MARGIN_BOTTOM_PX
 TARGET_PANEL_WIDTH_TO_HEIGHT = 2.0
 RASTER_MARKER_SYMBOL = "line-ns-open"
 RASTER_MARKER_COLOR = "rgba(90, 90, 90, 0.75)"
+TITLE_Y = 0.98
+TITLE_FONT_SIZE = 16
+LEGEND_Y = 1.15
+LEGEND_FONT_SIZE = 11
+CONTROL_ROW_Y = 1.115
+MODE_BUTTONS_X = 0.00
+MODE_BUTTONS_Y = 1.30
+SLIDER_X = 0.00
+SLIDER_Y = 1.25
+SLIDER_LEN = 0.25
 
 
 def _normalize_run_id(value: Any) -> str | None:
@@ -519,12 +531,12 @@ def _build_xspan_slider(global_xmax: float, initial_window_s: float | None) -> t
     slider = {
         "active": active_index,
         "currentvalue": {"prefix": "X span (s): "},
-        "len": 0.72,
-        "x": 0.18,
+        "len": SLIDER_LEN,
+        "x": SLIDER_X,
         "xanchor": "left",
-        "y": 1.10,
+        "y": SLIDER_Y,
         "yanchor": "top",
-        "pad": {"t": 0, "b": 0},
+        "pad": {"t": 6, "b": 0},
         "steps": steps,
     }
     return [slider], float(window_values[active_index])
@@ -565,13 +577,23 @@ def _make_plate_figure(title: str, width_px: int, height_px: int | None) -> go.F
         vertical_spacing=PLATE_VERTICAL_SPACING,
     )
     fig.update_layout(
-        title=dict(text=title, x=0.5),
+        title=dict(text=title, x=0.5, xanchor="center", y=TITLE_Y, yanchor="top", font=dict(size=TITLE_FONT_SIZE)),
         width=width_px,
         height=resolved_height_px,
         template="plotly_white",
         hovermode="closest",
-        margin=dict(l=50, r=40, t=170, b=70),
-        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="center", x=0.5),
+        margin=dict(l=50, r=40, t=FIGURE_MARGIN_TOP_PX, b=FIGURE_MARGIN_BOTTOM_PX),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=LEGEND_Y,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1,
+            font=dict(size=LEGEND_FONT_SIZE),
+        ),
     )
     return fig
 
@@ -777,16 +799,27 @@ def create_scan_figure(
         trace.visible = visible
 
     fig.update_layout(
-        title=dict(text=f"Plate Raster + Synchrony: {label}<br><sup>run_id={run_id}</sup>", x=0.5),
+        title=dict(
+            text=f"Plate Raster + Synchrony: {label}<br><sup>run_id={run_id}</sup>",
+            x=0.5,
+            xanchor="center",
+            y=TITLE_Y,
+            yanchor="top",
+            font=dict(size=TITLE_FONT_SIZE),
+        ),
         sliders=sliders,
         updatemenus=[
             dict(
                 type="buttons",
                 direction="left",
-                x=0.18,
-                y=1.18,
+                x=MODE_BUTTONS_X,
+                y=MODE_BUTTONS_Y,
                 xanchor="left",
                 yanchor="top",
+                bgcolor="rgba(255, 255, 255, 0.8)",
+                bordercolor="rgba(0, 0, 0, 0.2)",
+                borderwidth=1,
+                pad={"r": 12, "t": 4, "b": 0},
                 buttons=[
                     dict(label="Both", method="update", args=[{"visible": mode_visibility["both"]}]),
                     dict(label="Raster only", method="update", args=[{"visible": mode_visibility["raster"]}]),
