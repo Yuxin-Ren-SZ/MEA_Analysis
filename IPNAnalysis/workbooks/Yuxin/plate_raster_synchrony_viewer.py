@@ -502,6 +502,227 @@ def _configure_static_plate_figure(fig: go.Figure) -> None:
         fig.update_xaxes(title_text="Time (s)" if row == PLATE_ROWS else None, row=row, col=col)
 
 
+def _panel_axis_titles(panel_meta: dict[str, Any], display_mode: str) -> tuple[str | None, str | None]:
+    _validate_display_mode(display_mode)
+    col = int(panel_meta["col"])
+    if display_mode == "synchrony":
+        primary_title = "Sync" if col == 1 else None
+        secondary_title = None
+        return primary_title, secondary_title
+
+    primary_title = "Unit" if col == 1 else None
+    secondary_title = "Sync" if col == PLATE_COLS else None
+    return primary_title, secondary_title
+
+
+def _apply_axis_mode_to_figure(fig: go.Figure, display_mode: str) -> None:
+    _validate_display_mode(display_mode)
+
+    for panel_meta in PANEL_METADATA:
+        row = int(panel_meta["row"])
+        col = int(panel_meta["col"])
+        primary_title, secondary_title = _panel_axis_titles(panel_meta, display_mode)
+
+        if display_mode == "synchrony":
+            fig.update_yaxes(
+                title_text=primary_title,
+                visible=True,
+                showgrid=True,
+                zeroline=False,
+                showticklabels=True,
+                row=row,
+                col=col,
+                secondary_y=False,
+            )
+            fig.update_yaxes(
+                title_text=None,
+                visible=False,
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                row=row,
+                col=col,
+                secondary_y=True,
+            )
+            continue
+
+        fig.update_yaxes(
+            title_text=primary_title,
+            visible=True,
+            showgrid=True,
+            zeroline=True,
+            showticklabels=True,
+            row=row,
+            col=col,
+            secondary_y=False,
+        )
+        fig.update_yaxes(
+            title_text=secondary_title,
+            visible=True,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=None,
+            row=row,
+            col=col,
+            secondary_y=True,
+        )
+
+
+def _apply_axis_ranges_to_figure(fig: go.Figure, scan_payload: dict[str, Any], display_mode: str) -> None:
+    _validate_display_mode(display_mode)
+
+    for panel_meta, panel_payload in zip(PANEL_METADATA, scan_payload["panels"]):
+        row = int(panel_meta["row"])
+        col = int(panel_meta["col"])
+        primary_ymax = float(panel_payload["secondary_ymax"] if display_mode == "synchrony" else panel_payload["primary_ymax"])
+        secondary_ymax = float(panel_payload["secondary_ymax"])
+        fig.update_yaxes(range=[0.0, primary_ymax], row=row, col=col, secondary_y=False)
+        fig.update_yaxes(range=[0.0, secondary_ymax], row=row, col=col, secondary_y=True)
+
+
+def _axis_mode_relayout(scan_payload: dict[str, Any], display_mode: str) -> dict[str, Any]:
+    _validate_display_mode(display_mode)
+    relayout: dict[str, Any] = {}
+
+    for panel_meta, panel_payload in zip(PANEL_METADATA, scan_payload["panels"]):
+        primary_title, secondary_title = _panel_axis_titles(panel_meta, display_mode)
+        primary_key = str(panel_meta["primary_yaxis_layout_key"])
+        secondary_key = str(panel_meta["secondary_yaxis_layout_key"])
+
+        if display_mode == "synchrony":
+            relayout[f"{primary_key}.range"] = [0.0, float(panel_payload["secondary_ymax"])]
+            relayout[f"{primary_key}.title.text"] = primary_title or ""
+            relayout[f"{primary_key}.visible"] = True
+            relayout[f"{primary_key}.showgrid"] = True
+            relayout[f"{primary_key}.zeroline"] = False
+            relayout[f"{primary_key}.showticklabels"] = True
+            relayout[f"{secondary_key}.range"] = [0.0, float(panel_payload["secondary_ymax"])]
+            relayout[f"{secondary_key}.title.text"] = ""
+            relayout[f"{secondary_key}.visible"] = False
+            relayout[f"{secondary_key}.showgrid"] = False
+            relayout[f"{secondary_key}.zeroline"] = False
+            relayout[f"{secondary_key}.showticklabels"] = False
+            continue
+
+        relayout[f"{primary_key}.range"] = [0.0, float(panel_payload["primary_ymax"])]
+        relayout[f"{primary_key}.title.text"] = primary_title or ""
+        relayout[f"{primary_key}.visible"] = True
+        relayout[f"{primary_key}.showgrid"] = True
+        relayout[f"{primary_key}.zeroline"] = True
+        relayout[f"{primary_key}.showticklabels"] = True
+        relayout[f"{secondary_key}.range"] = [0.0, float(panel_payload["secondary_ymax"])]
+        relayout[f"{secondary_key}.title.text"] = secondary_title or ""
+        relayout[f"{secondary_key}.visible"] = True
+        relayout[f"{secondary_key}.showgrid"] = False
+        relayout[f"{secondary_key}.zeroline"] = False
+        relayout[f"{secondary_key}.showticklabels"] = None
+
+    return relayout
+
+
+def _synchrony_axis_uses_primary(display_mode: str, *, include_embedded_controls: bool) -> bool:
+    return not include_embedded_controls and display_mode == "synchrony"
+
+
+def _synchrony_traces_for_panel(
+    sync_payload: dict[str, Any],
+    hover_prefix: str,
+    viewer_config: ViewerConfig,
+    *,
+    showlegend_first: bool,
+) -> list[go.BaseTraceType]:
+    traces: list[go.BaseTraceType] = []
+    show_next_legend = bool(showlegend_first)
+
+    def next_showlegend() -> bool:
+        nonlocal show_next_legend
+        value = show_next_legend
+        show_next_legend = False
+        return value
+
+    signal_x = np.asarray(sync_payload["signal"]["x"], dtype=float)
+    signal_y = np.asarray(sync_payload["signal"]["y"], dtype=float)
+    smooth_x = np.asarray(sync_payload["smooth"]["x"], dtype=float)
+    smooth_y = np.asarray(sync_payload["smooth"]["y"], dtype=float)
+    peak_x = np.asarray(sync_payload["peaks"]["x"], dtype=float)
+    peak_y = np.asarray(sync_payload["peaks"]["y"], dtype=float)
+
+    if signal_x.size and signal_y.size:
+        traces.append(
+            go.Scattergl(
+                x=signal_x,
+                y=signal_y,
+                mode="lines",
+                line=dict(color="#b22222", width=max(0.5, float(viewer_config.line_width))),
+                hovertemplate=f"{hover_prefix}<br>Synchrony=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
+                name="Synchrony",
+                legendgroup="synchrony",
+                showlegend=next_showlegend(),
+            )
+        )
+
+    if smooth_x.size and smooth_y.size:
+        traces.append(
+            go.Scattergl(
+                x=smooth_x,
+                y=smooth_y,
+                mode="lines",
+                line=dict(color="rgba(255, 140, 0, 0.95)", width=max(0.5, float(viewer_config.line_width) - 0.1)),
+                hovertemplate=f"{hover_prefix}<br>Smooth synchrony=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
+                name="Synchrony smooth",
+                legendgroup="synchrony",
+                showlegend=next_showlegend(),
+            )
+        )
+
+    if peak_x.size and peak_y.size:
+        traces.append(
+            go.Scattergl(
+                x=peak_x,
+                y=peak_y,
+                mode="markers",
+                marker=dict(color="red", size=4),
+                hovertemplate=f"{hover_prefix}<br>Burst peak=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
+                name="Burst peaks",
+                legendgroup="synchrony",
+                showlegend=next_showlegend(),
+            )
+        )
+
+    line_x = np.asarray([sync_payload["line_start"], sync_payload["xmax"]], dtype=float)
+    if line_x.size == 2 and sync_payload["baseline"] is not None:
+        baseline_value = float(sync_payload["baseline"])
+        traces.append(
+            go.Scatter(
+                x=line_x,
+                y=np.asarray([baseline_value, baseline_value], dtype=float),
+                mode="lines",
+                line=dict(color="rgba(255, 102, 0, 0.7)", width=1, dash="dash"),
+                hoverinfo="skip",
+                name="Baseline",
+                legendgroup="synchrony",
+                showlegend=False,
+            )
+        )
+
+    if line_x.size == 2 and sync_payload["threshold"] is not None:
+        threshold_value = float(sync_payload["threshold"])
+        traces.append(
+            go.Scatter(
+                x=line_x,
+                y=np.asarray([threshold_value, threshold_value], dtype=float),
+                mode="lines",
+                line=dict(color="rgba(192, 57, 43, 0.8)", width=1, dash="dash"),
+                hoverinfo="skip",
+                name="Threshold",
+                legendgroup="synchrony",
+                showlegend=False,
+            )
+        )
+
+    return traces
+
+
 def _sanitize_filename_part(value: Any) -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
     text = text.strip("._")
@@ -774,10 +995,13 @@ def _build_scan_figure(
         height_px=viewer_config.height_px,
     )
     _configure_static_plate_figure(fig)
+    _apply_axis_mode_to_figure(fig, effective_mode)
+    _apply_axis_ranges_to_figure(fig, scan_payload, effective_mode)
 
     trace_roles: list[str] = []
     raster_legend_shown = False
-    synchrony_legend_shown = False
+    synchrony_secondary_legend_shown = False
+    synchrony_primary_legend_shown = False
 
     for panel_meta, panel_payload in zip(PANEL_METADATA, scan_payload["panels"]):
         row = int(panel_meta["row"])
@@ -811,122 +1035,50 @@ def _build_scan_figure(
 
         if should_add_synchrony:
             sync_payload = panel_payload["synchrony"]
-            signal_x = np.asarray(sync_payload["signal"]["x"], dtype=float)
-            signal_y = np.asarray(sync_payload["signal"]["y"], dtype=float)
-            smooth_x = np.asarray(sync_payload["smooth"]["x"], dtype=float)
-            smooth_y = np.asarray(sync_payload["smooth"]["y"], dtype=float)
-            peak_x = np.asarray(sync_payload["peaks"]["x"], dtype=float)
-            peak_y = np.asarray(sync_payload["peaks"]["y"], dtype=float)
             hover_prefix = f"{panel_meta['plate_label']} / {panel_meta['well_id']}"
 
-            if signal_x.size and signal_y.size:
-                fig.add_trace(
-                    go.Scattergl(
-                        x=signal_x,
-                        y=signal_y,
-                        mode="lines",
-                        line=dict(color="#b22222", width=max(0.5, float(viewer_config.line_width))),
-                        hovertemplate=f"{hover_prefix}<br>Synchrony=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
-                        name="Synchrony",
-                        legendgroup="synchrony",
-                        showlegend=not synchrony_legend_shown,
-                    ),
-                    row=row,
-                    col=col,
-                    secondary_y=True,
+            if include_embedded_controls:
+                secondary_traces = _synchrony_traces_for_panel(
+                    sync_payload,
+                    hover_prefix,
+                    viewer_config,
+                    showlegend_first=not synchrony_secondary_legend_shown,
                 )
-                synchrony_legend_shown = True
-                trace_roles.append("synchrony")
+                if secondary_traces:
+                    synchrony_secondary_legend_shown = True
+                for trace in secondary_traces:
+                    fig.add_trace(trace, row=row, col=col, secondary_y=True)
+                    trace_roles.append("synchrony_secondary")
 
-            if smooth_x.size and smooth_y.size:
-                fig.add_trace(
-                    go.Scattergl(
-                        x=smooth_x,
-                        y=smooth_y,
-                        mode="lines",
-                        line=dict(color="rgba(255, 140, 0, 0.95)", width=max(0.5, float(viewer_config.line_width) - 0.1)),
-                        hovertemplate=f"{hover_prefix}<br>Smooth synchrony=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
-                        name="Synchrony smooth",
-                        legendgroup="synchrony",
-                        showlegend=not synchrony_legend_shown,
-                    ),
-                    row=row,
-                    col=col,
-                    secondary_y=True,
+                primary_traces = _synchrony_traces_for_panel(
+                    sync_payload,
+                    hover_prefix,
+                    viewer_config,
+                    showlegend_first=not synchrony_primary_legend_shown,
                 )
-                synchrony_legend_shown = True
-                trace_roles.append("synchrony")
-
-            if peak_x.size and peak_y.size:
-                fig.add_trace(
-                    go.Scattergl(
-                        x=peak_x,
-                        y=peak_y,
-                        mode="markers",
-                        marker=dict(color="red", size=4),
-                        hovertemplate=f"{hover_prefix}<br>Burst peak=%{{y:.3f}}<br>t=%{{x:.3f}} s<extra></extra>",
-                        name="Burst peaks",
-                        legendgroup="synchrony",
-                        showlegend=not synchrony_legend_shown,
+                if primary_traces:
+                    synchrony_primary_legend_shown = True
+                for trace in primary_traces:
+                    fig.add_trace(trace, row=row, col=col, secondary_y=False)
+                    trace_roles.append("synchrony_primary")
+            else:
+                use_primary_axis = _synchrony_axis_uses_primary(effective_mode, include_embedded_controls=include_embedded_controls)
+                synchrony_traces = _synchrony_traces_for_panel(
+                    sync_payload,
+                    hover_prefix,
+                    viewer_config,
+                    showlegend_first=not (
+                        synchrony_primary_legend_shown if use_primary_axis else synchrony_secondary_legend_shown
                     ),
-                    row=row,
-                    col=col,
-                    secondary_y=True,
                 )
-                synchrony_legend_shown = True
-                trace_roles.append("synchrony")
-
-            line_x = np.asarray([sync_payload["line_start"], sync_payload["xmax"]], dtype=float)
-            if line_x.size == 2 and sync_payload["baseline"] is not None:
-                baseline_value = float(sync_payload["baseline"])
-                fig.add_trace(
-                    go.Scatter(
-                        x=line_x,
-                        y=np.asarray([baseline_value, baseline_value], dtype=float),
-                        mode="lines",
-                        line=dict(color="rgba(255, 102, 0, 0.7)", width=1, dash="dash"),
-                        hoverinfo="skip",
-                        name="Baseline",
-                        legendgroup="synchrony",
-                        showlegend=False,
-                    ),
-                    row=row,
-                    col=col,
-                    secondary_y=True,
-                )
-                trace_roles.append("synchrony")
-
-            if line_x.size == 2 and sync_payload["threshold"] is not None:
-                threshold_value = float(sync_payload["threshold"])
-                fig.add_trace(
-                    go.Scatter(
-                        x=line_x,
-                        y=np.asarray([threshold_value, threshold_value], dtype=float),
-                        mode="lines",
-                        line=dict(color="rgba(192, 57, 43, 0.8)", width=1, dash="dash"),
-                        hoverinfo="skip",
-                        name="Threshold",
-                        legendgroup="synchrony",
-                        showlegend=False,
-                    ),
-                    row=row,
-                    col=col,
-                    secondary_y=True,
-                )
-                trace_roles.append("synchrony")
-
-        fig.update_yaxes(
-            range=[0.0, float(panel_payload["primary_ymax"])],
-            row=row,
-            col=col,
-            secondary_y=False,
-        )
-        fig.update_yaxes(
-            range=[0.0, float(panel_payload["secondary_ymax"])],
-            row=row,
-            col=col,
-            secondary_y=True,
-        )
+                if synchrony_traces:
+                    if use_primary_axis:
+                        synchrony_primary_legend_shown = True
+                    else:
+                        synchrony_secondary_legend_shown = True
+                for trace in synchrony_traces:
+                    fig.add_trace(trace, row=row, col=col, secondary_y=not use_primary_axis)
+                    trace_roles.append("synchrony_primary" if use_primary_axis else "synchrony_secondary")
 
         annotation = _panel_status_to_annotation(panel_meta, panel_payload["status"])
         if annotation is not None:
@@ -953,9 +1105,9 @@ def _build_scan_figure(
             fig.update_xaxes(range=[0.0, window_end_from_slider])
 
         mode_visibility = {
-            "both": [True for _ in trace_roles],
+            "both": [role in {"raster", "synchrony_secondary"} for role in trace_roles],
             "raster": [role == "raster" for role in trace_roles],
-            "synchrony": [role == "synchrony" for role in trace_roles],
+            "synchrony": [role == "synchrony_primary" for role in trace_roles],
         }
         for trace, visible in zip(fig.data, mode_visibility[effective_mode]):
             trace.visible = visible
@@ -975,9 +1127,21 @@ def _build_scan_figure(
                     borderwidth=1,
                     pad={"r": 12, "t": 4, "b": 0},
                     buttons=[
-                        dict(label="Both", method="update", args=[{"visible": mode_visibility["both"]}]),
-                        dict(label="Raster only", method="update", args=[{"visible": mode_visibility["raster"]}]),
-                        dict(label="Synchrony only", method="update", args=[{"visible": mode_visibility["synchrony"]}]),
+                        dict(
+                            label="Both",
+                            method="update",
+                            args=[{"visible": mode_visibility["both"]}, _axis_mode_relayout(scan_payload, "both")],
+                        ),
+                        dict(
+                            label="Raster only",
+                            method="update",
+                            args=[{"visible": mode_visibility["raster"]}, _axis_mode_relayout(scan_payload, "raster")],
+                        ),
+                        dict(
+                            label="Synchrony only",
+                            method="update",
+                            args=[{"visible": mode_visibility["synchrony"]}, _axis_mode_relayout(scan_payload, "synchrony")],
+                        ),
                     ],
                 )
             ],
@@ -1337,6 +1501,58 @@ def _build_combined_viewer_html(
       return true;
     }
 
+    function panelAxisTitles(panelMeta, displayMode) {
+      if (displayMode === "synchrony") {
+        return {
+          primary: panelMeta.col === 1 ? "Sync" : "",
+          secondary: "",
+        };
+      }
+      return {
+        primary: panelMeta.col === 1 ? "Unit" : "",
+        secondary: panelMeta.col === 6 ? "Sync" : "",
+      };
+    }
+
+    function applyModeAxisLayout(layout, displayMode) {
+      for (const panelMeta of PANEL_METADATA) {
+        const primaryAxis = layout[panelMeta.primary_yaxis_layout_key];
+        const secondaryAxis = layout[panelMeta.secondary_yaxis_layout_key];
+        const titles = panelAxisTitles(panelMeta, displayMode);
+
+        if (displayMode === "synchrony") {
+          primaryAxis.title = primaryAxis.title || {};
+          primaryAxis.title.text = titles.primary;
+          primaryAxis.visible = true;
+          primaryAxis.showgrid = true;
+          primaryAxis.zeroline = false;
+          primaryAxis.showticklabels = true;
+
+          secondaryAxis.title = secondaryAxis.title || {};
+          secondaryAxis.title.text = "";
+          secondaryAxis.visible = false;
+          secondaryAxis.showgrid = false;
+          secondaryAxis.zeroline = false;
+          secondaryAxis.showticklabels = false;
+          continue;
+        }
+
+        primaryAxis.title = primaryAxis.title || {};
+        primaryAxis.title.text = titles.primary;
+        primaryAxis.visible = true;
+        primaryAxis.showgrid = true;
+        primaryAxis.zeroline = true;
+        primaryAxis.showticklabels = true;
+
+        secondaryAxis.title = secondaryAxis.title || {};
+        secondaryAxis.title.text = titles.secondary;
+        secondaryAxis.visible = true;
+        secondaryAxis.showgrid = false;
+        secondaryAxis.zeroline = false;
+        delete secondaryAxis.showticklabels;
+      }
+    }
+
     function buildFigure(scanPayload) {
       const layout = deepClone(BASE_LAYOUT);
       const annotations = (BASE_LAYOUT.annotations || []).slice();
@@ -1347,9 +1563,13 @@ def _build_combined_viewer_html(
       for (let index = 0; index < PANEL_METADATA.length; index += 1) {
         const panelMeta = PANEL_METADATA[index];
         const panelPayload = scanPayload.panels[index];
+        const synchronyOnPrimary = state.displayMode === "synchrony";
 
         layout[panelMeta.xaxis_layout_key].range = [0, windowEnd];
-        layout[panelMeta.primary_yaxis_layout_key].range = [0, panelPayload.primary_ymax];
+        layout[panelMeta.primary_yaxis_layout_key].range = [
+          0,
+          synchronyOnPrimary ? panelPayload.secondary_ymax : panelPayload.primary_ymax,
+        ];
         layout[panelMeta.secondary_yaxis_layout_key].range = [0, panelPayload.secondary_ymax];
 
         if (state.displayMode !== "synchrony") {
@@ -1393,7 +1613,7 @@ def _build_combined_viewer_html(
               legendgroup: "synchrony",
               showlegend: claimLegend(legendState, "synchrony"),
               xaxis: panelMeta.xaxis_ref,
-              yaxis: panelMeta.secondary_yaxis_ref,
+              yaxis: synchronyOnPrimary ? panelMeta.primary_yaxis_ref : panelMeta.secondary_yaxis_ref,
             });
           }
 
@@ -1412,7 +1632,7 @@ def _build_combined_viewer_html(
               legendgroup: "synchrony",
               showlegend: claimLegend(legendState, "synchrony"),
               xaxis: panelMeta.xaxis_ref,
-              yaxis: panelMeta.secondary_yaxis_ref,
+              yaxis: synchronyOnPrimary ? panelMeta.primary_yaxis_ref : panelMeta.secondary_yaxis_ref,
             });
           }
 
@@ -1428,7 +1648,7 @@ def _build_combined_viewer_html(
               legendgroup: "synchrony",
               showlegend: claimLegend(legendState, "synchrony"),
               xaxis: panelMeta.xaxis_ref,
-              yaxis: panelMeta.secondary_yaxis_ref,
+              yaxis: synchronyOnPrimary ? panelMeta.primary_yaxis_ref : panelMeta.secondary_yaxis_ref,
             });
           }
 
@@ -1444,7 +1664,7 @@ def _build_combined_viewer_html(
               legendgroup: "synchrony",
               showlegend: false,
               xaxis: panelMeta.xaxis_ref,
-              yaxis: panelMeta.secondary_yaxis_ref,
+              yaxis: synchronyOnPrimary ? panelMeta.primary_yaxis_ref : panelMeta.secondary_yaxis_ref,
             });
           }
 
@@ -1460,7 +1680,7 @@ def _build_combined_viewer_html(
               legendgroup: "synchrony",
               showlegend: false,
               xaxis: panelMeta.xaxis_ref,
-              yaxis: panelMeta.secondary_yaxis_ref,
+              yaxis: synchronyOnPrimary ? panelMeta.primary_yaxis_ref : panelMeta.secondary_yaxis_ref,
             });
           }
         }
@@ -1471,6 +1691,7 @@ def _build_combined_viewer_html(
         }
       }
 
+      applyModeAxisLayout(layout, state.displayMode);
       layout.annotations = annotations;
       layout.title.text =
         "Plate Raster + Synchrony: " + scanPayload.scan_label +
