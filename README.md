@@ -25,26 +25,29 @@ MEA_Analysis/
 The active pipeline lives in [`IPNAnalysis/`](IPNAnalysis/README.md).  
 See the **[IPNAnalysis README](IPNAnalysis/README.md)** for:
 
-- Architecture overview (driver → routine → config_loader)
+- Architecture overview (new pipeline core + legacy wrappers)
 - Pipeline stages (preprocessing, sorting, analyzer, reports)
-- Configuration system (`mea_config.json`)
+- Configuration system (YAML-first with legacy JSON compatibility)
 - Typical workflows and full CLI reference
 
 ### Quick Start
 
 ```bash
-# Generate a config template
-python IPNAnalysis/config_loader.py mea_config.json
+# Generate a YAML config template
+mea-analysis config init mea_pipeline.yaml
 
-# Dry run on a directory
-python IPNAnalysis/run_pipeline_driver.py /data/experiment --config mea_config.json --dry
+# Inspect a directory
+mea-analysis discover /data/experiment --config mea_pipeline.yaml
 
 # Full batch run
-python IPNAnalysis/run_pipeline_driver.py /data/experiment --config mea_config.json
+mea-analysis run /data/experiment --config mea_pipeline.yaml --output-root /output
 
-# Single well
+# Reanalyze existing legacy outputs
+mea-analysis reanalyze /output/project --config mea_pipeline.yaml
+
+# Legacy single-well wrapper still supported
 python IPNAnalysis/mea_analysis_routine.py /data/exp/run_001/Network/data.raw.h5 \
-  --well well000 --rec rec0001 --config mea_config.json
+  --well well000 --rec rec0001 --config mea_pipeline.yaml --output-dir /output
 ```
 
 ## Dependencies
@@ -201,4 +204,3 @@ docker run -it --gpus all --rm --entrypoint bash \
 ## License
 
 Pending
-

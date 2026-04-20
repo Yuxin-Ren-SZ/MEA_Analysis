@@ -13,9 +13,33 @@ setup(
     packages=[
         "MEA_Analysis",
         "MEA_Analysis.IPNAnalysis",
+        "MEA_Analysis.IPNAnalysis.pipeline",
+        "MEA_Analysis.IPNAnalysis.pipeline.compat",
+        "MEA_Analysis.IPNAnalysis.pipeline.plugins",
+        "MEA_Analysis.IPNAnalysis.pipeline.stages",
+        "IPNAnalysis",
+        "IPNAnalysis.pipeline",
+        "IPNAnalysis.pipeline.compat",
+        "IPNAnalysis.pipeline.plugins",
+        "IPNAnalysis.pipeline.stages",
     ],
     package_dir={
+        "": ".",
         "MEA_Analysis": ".",
         "MEA_Analysis.IPNAnalysis": "IPNAnalysis",
+        "MEA_Analysis.IPNAnalysis.pipeline": "IPNAnalysis/pipeline",
+        "MEA_Analysis.IPNAnalysis.pipeline.compat": "IPNAnalysis/pipeline/compat",
+        "MEA_Analysis.IPNAnalysis.pipeline.plugins": "IPNAnalysis/pipeline/plugins",
+        "MEA_Analysis.IPNAnalysis.pipeline.stages": "IPNAnalysis/pipeline/stages",
+        "IPNAnalysis": "IPNAnalysis",
+        "IPNAnalysis.pipeline": "IPNAnalysis/pipeline",
+        "IPNAnalysis.pipeline.compat": "IPNAnalysis/pipeline/compat",
+        "IPNAnalysis.pipeline.plugins": "IPNAnalysis/pipeline/plugins",
+        "IPNAnalysis.pipeline.stages": "IPNAnalysis/pipeline/stages",
+    },
+    entry_points={
+        "console_scripts": [
+            "mea-analysis=IPNAnalysis.pipeline.cli:main",
+        ]
     },
 )

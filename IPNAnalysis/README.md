@@ -2,6 +2,31 @@
 
 This is a production-grade **MEA (Microelectrode Array) processing pipeline** for neuronal spike sorting, analysis, and burst detection. It processes neuronal data recorded from Maxwell Biosystems MEA systems with comprehensive preprocessing, spike sorting using Kilosort, waveform extraction, and neuronal network burst analysis.
 
+## V2 CLI
+
+The refactor now exposes a stage-based CLI in addition to the legacy scripts.
+
+```bash
+# write a YAML config template
+mea-analysis config init mea_pipeline.yaml
+
+# inspect what would run
+mea-analysis discover /data/experiment --config mea_pipeline.yaml
+
+# run the pipeline
+mea-analysis run /data/experiment --config mea_pipeline.yaml --output-root /output
+
+# reanalyze existing legacy well output folders
+mea-analysis reanalyze /output/project --config mea_pipeline.yaml
+```
+
+Legacy entrypoints still exist as compatibility wrappers:
+
+```bash
+python IPNAnalysis/run_pipeline_driver.py ...
+python IPNAnalysis/mea_analysis_routine.py ...
+```
+
 ## Architecture Overview
 
 ### Two-Tier Design
